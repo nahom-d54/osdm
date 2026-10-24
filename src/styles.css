@@ -1,0 +1,159 @@
+@import "tailwindcss";
+
+/*
+ * OSDM design system — "instrument bench".
+ * Cool drafting-slate surfaces, IBM Plex Mono for all measurement data,
+ * status colors reserved for semantics. Both themes share one hue family.
+ */
+
+@theme {
+  --font-display: "Familjen Grotesk", "IBM Plex Sans", sans-serif;
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", monospace;
+
+  --color-bg: var(--c-bg);
+  --color-panel: var(--c-panel);
+  --color-raise: var(--c-raise);
+  --color-line: var(--c-line);
+  --color-line-soft: var(--c-line-soft);
+  --color-ink: var(--c-ink);
+  --color-ink-strong: var(--c-ink-strong);
+  --color-muted: var(--c-muted);
+  --color-faint: var(--c-faint);
+  --color-accent: var(--c-accent);
+  --color-accent-soft: var(--c-accent-soft);
+  --color-accent-ink: var(--c-accent-ink);
+  --color-ok: var(--c-ok);
+  --color-ok-soft: var(--c-ok-soft);
+  --color-warn: var(--c-warn);
+  --color-warn-soft: var(--c-warn-soft);
+  --color-danger: var(--c-danger);
+  --color-danger-soft: var(--c-danger-soft);
+
+  --radius-control: 6px;
+  --radius-panel: 10px;
+}
+
+:root,
+[data-theme="dark"] {
+  --c-bg: #0e141b;
+  --c-panel: #141b24;
+  --c-raise: #1b2430;
+  --c-line: #263140;
+  --c-line-soft: #1f2937;
+  --c-ink: #e7eef6;
+  --c-ink-strong: #ffffff;
+  --c-muted: #8fa2b6;
+  --c-faint: #55677c;
+  --c-accent: #55a0e8;
+  --c-accent-soft: #1c3450;
+  --c-accent-ink: #0b1520;
+  --c-ok: #57c48f;
+  --c-ok-soft: #173226;
+  --c-warn: #d9a23e;
+  --c-warn-soft: #33290f;
+  --c-danger: #de6a5c;
+  --c-danger-soft: #38180f;
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --c-bg: #edf0f4;
+  --c-panel: #ffffff;
+  --c-raise: #f5f7fa;
+  --c-line: #d9dfe8;
+  --c-line-soft: #e5eaf1;
+  --c-ink: #1a2330;
+  --c-ink-strong: #0c131c;
+  --c-muted: #5d6c7f;
+  --c-faint: #93a2b3;
+  --c-accent: #1e66c7;
+  --c-accent-soft: #dcecfd;
+  --c-accent-ink: #0c131c;
+  --c-ok: #1f9d6b;
+  --c-ok-soft: #ddf3e8;
+  --c-warn: #a17615;
+  --c-warn-soft: #f9efd4;
+  --c-danger: #c24f44;
+  --c-danger-soft: #fae3e0;
+  color-scheme: light;
+}
+
+html {
+  scrollbar-color: var(--c-line) transparent;
+}
+
+body {
+  background-color: var(--c-bg);
+  color: var(--c-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+::selection {
+  background: var(--c-accent-soft);
+}
+
+:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 1px;
+}
+
+kbd {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  border: 1px solid var(--c-line);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 2px 5px;
+  color: var(--c-muted);
+  background: var(--c-raise);
+}
+
+/* --- Signature: the segment ribbon -----------------------------------
+ * Committed bytes are solid; live (in-flight) bytes pulse underneath.
+ * Reduced motion disables the pulse; the distinction stays visible. */
+
+@keyframes live-pulse {
+  0%, 100% { opacity: 0.9; }
+  50% { opacity: 0.55; }
+}
+
+@keyframes flow-stripes {
+  from { background-position: 0 0; }
+  to { background-position: 16px 0; }
+}
+
+@keyframes rise-in {
+  from { transform: translateY(4px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.ribbon-live {
+  animation: live-pulse 1.4s ease-in-out infinite;
+}
+
+.flow-stripes {
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--c-line) 0 4px,
+    transparent 4px 8px
+  );
+  animation: flow-stripes 1.1s linear infinite;
+}
+
+.rise-in {
+  animation: rise-in 180ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ribbon-live,
+  .flow-stripes {
+    animation: none;
+  }
+  .rise-in {
+    animation: none;
+  }
+}

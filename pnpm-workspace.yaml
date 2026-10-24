@@ -1,0 +1,6 @@
+packages:
+  - "."
+
+# pnpm 10 reads build-script approvals from pnpm-workspace.yaml.
+onlyBuiltDependencies:
+  - esbuild
