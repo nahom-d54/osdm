@@ -1,0 +1,26 @@
+# OSDM
+
+A Rust + TypeScript desktop download manager, starting with a standalone Rust download engine.
+
+- **[Comprehensive V1 plan](PLAN.md)**
+- **[Engine documentation](crates/download-engine/README.md)**
+
+`src/` and `src-tauri/` are reserved for the future UI and desktop shell. They are not implemented yet.
+
+## Development
+
+Install a current stable Rust toolchain and the platform C/C++ build tools required by SQLite.
+
+```powershell
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all -- --check
+```
+
+Try the headless engine with an absolute destination path whose parent already exists:
+
+```powershell
+cargo run -p download-engine --example download -- "https://example.com/file.zip" "D:\Downloads\file.zip"
+```
+
+The destination must not exist. Downloads publish through hard links, requiring a compatible filesystem such as NTFS. The example stores its queue in `osdm.db` in the current directory.
