@@ -2,7 +2,7 @@
 
 A Rust + TypeScript desktop download manager, starting with a standalone Rust download engine.
 
-- **[Comprehensive V1 plan](PLAN.md)**
+- **[Priority-driven product and engineering plan](PLAN.md)**
 - **[Engine documentation](crates/download-engine/README.md)**
 
 `src/` and `src-tauri/` are reserved for the future UI and desktop shell. They are not implemented yet.
