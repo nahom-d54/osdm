@@ -11,6 +11,22 @@ use std::{
 use tokio::sync::{Mutex, Semaphore, broadcast};
 use tokio_util::sync::CancellationToken;
 
+/// Windows compares destination names without regard to case. Compare the reserved
+/// destination the same way so `File.bin` and `file.bin` cannot both enter the queue.
+fn same_destination(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        left.to_string_lossy().to_lowercase() == right.to_string_lossy().to_lowercase()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 #[derive(Clone)]
 pub struct Engine {
     pub(crate) inner: Arc<Inner>,
@@ -218,11 +234,9 @@ impl Engine {
         if data.stopped {
             return Err(Error::Shutdown);
         }
-        if data
-            .downloads
-            .iter()
-            .any(|d| d.destination == destination && d.state != DownloadState::Completed)
-        {
+        if data.downloads.iter().any(|d| {
+            same_destination(&d.destination, &destination) && d.state != DownloadState::Completed
+        }) {
             return Err(Error::Invalid(
                 "destination is already reserved by a download".into(),
             ));

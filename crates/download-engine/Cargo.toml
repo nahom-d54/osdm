@@ -21,3 +21,11 @@ uuid = { version = "1", features = ["v4", "serde"] }
 axum = "0.8"
 tempfile = "3"
 sha2 = "0.10"
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+] }

@@ -498,6 +498,10 @@ async fn checkpoint(
     received: u64,
     file: &mut tokio::fs::File,
 ) -> Result<()> {
+    #[cfg(debug_assertions)]
+    if let Some(error) = crate::test_faults::checkpoint(id).await {
+        return Err(error.into());
+    }
     file.flush().await?;
     file.sync_data().await?;
     let mut data = inner.data.lock().await;
@@ -540,6 +544,10 @@ async fn throttle(inner: &Inner, bytes: u64, token: &CancellationToken) -> Resul
 }
 
 async fn publish(inner: &Inner, id: DownloadId, token: &CancellationToken) -> Result<()> {
+    #[cfg(debug_assertions)]
+    if let Some(error) = crate::test_faults::publication_entry(id).await {
+        return Err(error.into());
+    }
     let mut data = inner.data.lock().await;
     if token.is_cancelled() {
         return Err(Error::Interrupted);
@@ -553,6 +561,10 @@ async fn publish(inner: &Inner, id: DownloadId, token: &CancellationToken) -> Re
         download.total_bytes = Some(bytes);
         download.ready_to_publish = true;
         inner.save(&data, id).await?;
+    }
+    #[cfg(debug_assertions)]
+    if let Some(error) = crate::test_faults::publication(id).await {
+        return Err(error.into());
     }
     let download = data.downloads.iter_mut().find(|d| d.id == id).unwrap();
     // Linking publishes atomically without replacing a user's destination file. Both

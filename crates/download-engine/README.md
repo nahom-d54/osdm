@@ -64,4 +64,17 @@ The database contains full source URLs, including signed query strings. Do not p
 - Server validators must be truthful. Last-Modified has weaker identity guarantees than strong ETags.
 - The initial schema is version 1; compatibility migrations are required before changing persisted models.
 
+## Testing
+
+`cargo test --workspace` runs the fast suite, including checkpoint/publication cancellation, disk-full and permission fault handling, connection caps, schema rejection, and Windows path tests.
+
+The multi-gigabyte streaming and bounded-memory test is ignored by default because it writes about 2.1 GiB and takes several minutes:
+
+```powershell
+$env:OSDM_LARGE_TEST = "1"
+cargo test -p download-engine --test downloads multi_gigabyte_download_keeps_memory_bounded -- --ignored --nocapture
+```
+
+The test skips itself when less than 3 GiB is free. It measures the process working set and fails if it grows by more than 128 MiB during the transfer.
+
 See the root `PLAN.md` for the full product roadmap and pre-release validation checklist.

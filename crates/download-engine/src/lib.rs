@@ -1,7 +1,11 @@
 #![doc = include_str!("../README.md")]
 mod engine;
+mod cleanup;
 mod model;
 mod store;
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub mod test_faults;
 mod transfer;
 
 pub use engine::Engine;
