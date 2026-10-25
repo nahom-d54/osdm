@@ -4,6 +4,18 @@ All notable changes to OSDM are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1-alpha.1] - 2026-10-25
+
+### Fixed
+
+- Removed the WebView browser context menu from production builds, including
+  Reload, Save as, Print, and Inspect, and blocked the corresponding common
+  browser shortcuts.
+- Fixed the Linux CI job by restricting Windows-only large-transfer test helpers
+  to Windows and using the platform-local URL for IPC tests.
+- Fixed Windows desktop test binaries failing before the harness loaded because
+  they lacked the Common-Controls v6 application manifest.
+
 ## [Unreleased]
 
 ### Planned
@@ -60,5 +72,6 @@ First public alpha. Distributed as a Windows NSIS installer.
 - SHA-256 verification requires a trusted reference; a computed hash alone does
   not establish authenticity.
 
-[Unreleased]: https://github.com/nahom-d54/osdm/compare/v0.1.0-alpha.1...HEAD
+[Unreleased]: https://github.com/nahom-d54/osdm/compare/v0.1.1-alpha.1...HEAD
+[0.1.1-alpha.1]: https://github.com/nahom-d54/osdm/releases/tag/v0.1.1-alpha.1
 [0.1.0-alpha.1]: https://github.com/nahom-d54/osdm/releases/tag/v0.1.0-alpha.1
