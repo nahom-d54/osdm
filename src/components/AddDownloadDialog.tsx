@@ -50,6 +50,7 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
   const [url, setUrl] = useState("");
   const [directory, setDirectory] = useState("");
   const [filename, setFilename] = useState("");
+  const [checksum, setChecksum] = useState("");
   const [probe, setProbe] = useState<UrlProbe | null>(null);
   const [nameSource, setNameSource] = useState<NameSource>("link");
   const [probeError, setProbeError] = useState<string | null>(null);
@@ -67,6 +68,7 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
     setUrl("");
     setDirectory(settings.default_directory);
     setFilename("");
+    setChecksum("");
     setProbe(null);
     setNameSource("link");
     setProbeError(null);
@@ -98,6 +100,7 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
   }, [open, settings.default_directory]);
 
   const trimmedUrl = url.trim();
+  const checksumInvalid = checksum.trim() !== "" && !/^[a-f0-9]{64}$/i.test(checksum.trim());
   const urlValid = /^https?:\/\/\S+$/i.test(trimmedUrl);
   const stem = filename.includes(".")
     ? filename.slice(0, filename.lastIndexOf("."))
@@ -186,6 +189,10 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
   };
 
   const download = async () => {
+    if (checksumInvalid) {
+      setError("SHA-256 must contain exactly 64 hexadecimal characters.");
+      return;
+    }
     if (target == null) {
       setError("Choose a destination folder and a filename.");
       return;
@@ -202,7 +209,7 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
         setBusy(false);
         return;
       }
-      await enqueue(trimmedUrl, target);
+      await enqueue(trimmedUrl, target, checksum.trim() || undefined);
       try {
         update({ default_directory: directory });
       } catch {
@@ -243,6 +250,7 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
     directory !== "" &&
     filename !== "" &&
     !filenameInvalid &&
+    !checksumInvalid &&
     !conflict &&
     !busy;
 
@@ -491,6 +499,21 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
                 {target ?? "Choose a destination folder"}
               </p>
             </Field>
+
+            <Field label="Expected SHA-256 (optional)" htmlFor="download-sha256" hint="Paste the publisher’s checksum. OSDM verifies it before saving the finished file.">
+              <Input
+                id="download-sha256"
+                value={checksum}
+                disabled={busy}
+                invalid={checksumInvalid}
+                onChange={(event) => setChecksum(event.target.value)}
+                placeholder="64 hexadecimal characters"
+                spellCheck={false}
+                autoCapitalize="off"
+                className="font-mono text-[11px]"
+              />
+            </Field>
+            {checksumInvalid && <ErrorNote>SHA-256 must contain exactly 64 hexadecimal characters.</ErrorNote>}
 
             {conflict && (
               <ErrorNote>

@@ -59,7 +59,9 @@ pub(crate) struct Inner {
     pub config: Config,
     pub client: reqwest::Client,
     pub connections: Arc<Semaphore>,
-    pub hosts: Mutex<HashMap<String, Arc<Semaphore>>>,
+    pub hosts: Mutex<HashMap<String, Arc<adaptive::Host>>>,
+    pub download_hosts: Mutex<HashMap<DownloadId, Arc<adaptive::Host>>>,
+    pub cooldowns: retry::Cooldowns,
     pub rate: AtomicU64,
     pub rate_clock: Mutex<tokio::time::Instant>,
     pub rate_changed: tokio::sync::Notify,
@@ -67,6 +69,23 @@ pub(crate) struct Inner {
 }
 
 impl Inner {
+    pub async fn host(&self, url: &str) -> Result<Arc<adaptive::Host>> {
+        let url = validated_url(url)?;
+        let hostname = url.host_str().unwrap().to_owned();
+        Ok(self
+            .hosts
+            .lock()
+            .await
+            .entry(hostname)
+            .or_insert_with(|| {
+                Arc::new(adaptive::Host::new(
+                    self.config
+                        .max_connections_per_host
+                        .min(self.config.max_connections),
+                ))
+            })
+            .clone())
+    }
     /// Call with the data lock held so persisted snapshots cannot overtake each other.
     pub async fn save(&self, data: &Data, id: DownloadId) -> Result<()> {
         let position = data
@@ -116,10 +135,14 @@ impl Engine {
                 DownloadState::Downloading | DownloadState::Pausing | DownloadState::Queued
             ) {
                 download.state = DownloadState::Paused;
+                download.error = None;
             } else if download.state == DownloadState::Canceling {
                 download.state = DownloadState::Canceled;
             }
             download.bytes_per_second = 0;
+            if download.integrity == IntegrityStatus::Verifying {
+                download.integrity = IntegrityStatus::Unverified;
+            }
             download.eta_seconds = None;
             for segment in &mut download.segments {
                 segment.downloaded = segment.committed;
@@ -140,6 +163,8 @@ impl Engine {
             rate_clock: Mutex::new(tokio::time::Instant::now()),
             rate_changed: tokio::sync::Notify::new(),
             hosts: Mutex::new(HashMap::new()),
+            download_hosts: Mutex::new(HashMap::new()),
+            cooldowns: retry::Cooldowns::default(),
             data: Mutex::new(Data {
                 downloads,
                 running: HashMap::new(),
@@ -158,12 +183,22 @@ impl Engine {
             loop {
                 tick.tick().await;
                 let Some(inner) = weak.upgrade() else { break };
+                {
+                    let hosts = inner.hosts.lock().await;
+                    for host in hosts.values() {
+                        host.tick(inner.rate.load(Ordering::Relaxed) > 0);
+                    }
+                }
                 let mut data = inner.data.lock().await;
                 if data.stopped {
                     break;
                 }
                 let now = Instant::now();
+                let download_hosts = inner.download_hosts.lock().await;
                 for download in &mut data.downloads {
+                    download.adaptive = download_hosts
+                        .get(&download.id)
+                        .map(|host| host.snapshot(download.id));
                     let bytes = download.downloaded_bytes();
                     let (previous, old_bytes) = samples
                         .insert(download.id, (now, bytes))
@@ -180,6 +215,7 @@ impl Engine {
                             .then(|| total.saturating_sub(bytes) / download.bytes_per_second)
                     });
                 }
+                drop(download_hosts);
                 let capacity = inner
                     .config
                     .max_active_downloads
@@ -244,6 +280,7 @@ impl Engine {
 
     pub async fn enqueue(&self, request: DownloadRequest) -> Result<DownloadId> {
         let url = validated_url(&request.url)?;
+        let expected_sha256 = integrity::normalize(request.expected_sha256)?;
         if !request.destination.is_absolute() || request.destination.file_name().is_none() {
             return Err(Error::Invalid(
                 "destination must be an absolute filename".into(),
@@ -278,6 +315,10 @@ impl Engine {
             error: None,
             bytes_per_second: 0,
             eta_seconds: None,
+            adaptive: None,
+            expected_sha256,
+            sha256: None,
+            integrity: IntegrityStatus::Unverified,
             validator: None,
             ranged: false,
             ready_to_publish: false,
@@ -356,6 +397,49 @@ impl Engine {
 
     pub async fn retry(&self, id: DownloadId) -> Result<()> {
         self.resume(id).await
+    }
+
+    /// Replace an inactive source. Resume revalidates the representation before
+    /// reusing checkpoints; a changed file starts over rather than mixing bytes.
+    pub async fn update_url(&self, id: DownloadId, url: &str) -> Result<()> {
+        let url = validated_url(url.trim())?;
+        let mut data = self.inner.data.lock().await;
+        if data.stopped {
+            return Err(Error::Shutdown);
+        }
+        let position = data
+            .downloads
+            .iter()
+            .position(|d| d.id == id)
+            .ok_or(Error::NotFound)?;
+        let mut download = data.downloads[position].clone();
+        if data.running.contains_key(&id)
+            || !matches!(
+                download.state,
+                DownloadState::Paused | DownloadState::Failed
+            )
+        {
+            return Err(Error::Invalid(
+                "pause the download before changing its URL".into(),
+            ));
+        }
+        // A failed completion save can leave the temporary file hard-linked to
+        // the published destination. Revalidation must never truncate that inode.
+        if download.ready_to_publish && tokio::fs::try_exists(&download.destination).await? {
+            return Err(Error::Invalid("the file is already awaiting publication recovery; resume it before changing the source".into()));
+        }
+        download.url = url.to_string();
+        download.state = DownloadState::Paused;
+        download.error = None;
+        download.sha256 = None;
+        // Keep the mismatch marker until prepare discards suspect checkpoints.
+        if download.integrity != IntegrityStatus::Mismatch {
+            download.integrity = IntegrityStatus::Unverified;
+        }
+        download.ready_to_publish = false;
+        self.inner.store.save(&download, position).await?;
+        data.downloads[position] = download;
+        Ok(())
     }
 
     /// Supply every known download ID exactly once. Active transfers are not interrupted.
@@ -458,4 +542,5 @@ async fn run(inner: Arc<Inner>, id: DownloadId, token: CancellationToken) {
         let _ = inner.events.send(EngineEvent::Error(error.to_string()));
     }
     data.running.remove(&id);
+    inner.download_hosts.lock().await.remove(&id);
 }

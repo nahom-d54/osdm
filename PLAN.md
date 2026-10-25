@@ -1,5 +1,7 @@
 # OSDM — priority-driven product and engineering plan
 
+The expanded feature scope is tracked in [Intelligent download delivery plan](docs/intelligent-downloads.md): adaptive/recovery/integrity first, resource and mirror management second, and scheduling/organization/media automation third. That document records the phased scope and acceptance gates.
+
 ## 1. Product
 
 ### 1.1 Goal
@@ -220,6 +222,8 @@ Ranged transfer additionally requires a usable validator. Without one, use a sin
 
 Partition `[0, total_size)` into fixed, disjoint ranges. Each segment has a start, exclusive end, live byte count, and durable committed byte count. Completed segments are skipped on resume.
 
+Durable segments are independent of live connection counts. The adaptive host controller starts with at most two connections, reduces concurrency on congestion, and cautiously trials extra connections using measured throughput. Workers use variable-sized HTTP subranges within their durable segment and checkpoint before yielding an excess connection. Global, per-host, and per-download limits remain ceilings.
+
 Use one hidden temporary file in the destination directory. Each worker has its own file handle and seeks within its assigned disjoint range. This avoids a merge and keeps segment writes separate without a central writer bottleneck. Streaming and throttling use bounded chunks; file size does not determine buffer size.
 
 ### 4.4 Response validation
@@ -246,23 +250,23 @@ The shared state lock also serializes database snapshots so an older update cann
 
 ### 4.6 Retry policy
 
-Retry network failures, truncated bodies, 408, 429, and server errors with bounded exponential backoff. Honor numeric Retry-After on transfer responses, capped at 120 seconds. Every wait is cancellable. Do not retry disk or permission errors as if they were network errors.
+Retry network failures, truncated bodies, 408, 429, and server errors with exponential backoff. Fallback waits use 1s, 2s, 4s… with jitter, capped at 120 seconds; `Retry-After` is honored in full as delta-seconds or an HTTP-date. Active downloads keep retrying 429/503 without consuming the retry budget; other transient failures and standalone metadata probes remain bounded. Every wait is cancellable. A host that answers 429/503 is put on a shared cooldown so other workers and downloads stop sending requests to it. Do not retry disk or permission errors as if they were network errors. Paused/failed downloads can replace their source URL; resume validates the source before reusing saved checkpoints.
 
-Follow-up hardening: HTTP-date Retry-After and probe-level Retry-After handling, jitter, richer structured failure categories, and optional per-host cooldown shared across downloads.
+Congestion also raises the retry floor while the host recovers. Successful subrequests and newly committed progress reset consecutive transient-failure accounting. Follow-up hardening: richer structured failure categories.
 
 ### 4.7 Persistence
 
-SQLite stores the ID, queue position, and serialized download record. Records include source URL, destination and temporary paths, state, expected size, validator, range layout, committed bytes, and publication intent. The initial schema is revision 1; future record changes need migration tests before desktop upgrades ship. Later priorities add categories, schedules, credential references, and Grabber projects; each addition ships with a migration and a downgrade test.
+SQLite stores the ID, queue position, and serialized download record. Records include source URL, destination and temporary paths, state, expected size, validator, range layout, committed bytes, checksum requirements/results, and publication intent. The current schema is revision 3: older records migrate with unverified defaults, and older engines reject the new schema rather than bypassing integrity requirements. Later priorities add categories, schedules, credential references, and Grabber projects; each addition ships with a migration and a downgrade test.
 
 ### 4.8 Publication
 
-After every segment is complete, persist a `ready_to_publish` marker. Publish using a same-directory hard link, which atomically creates the destination without overwriting an existing file. Persist completion, then unlink the temporary name.
+After every segment is complete, compute SHA-256 and verify any supplied reference before persisting a `ready_to_publish` marker. Publish using a same-directory hard link, which atomically creates the destination without overwriting an existing file. Persist completion, then unlink the temporary name.
 
 If a crash occurs after link creation, recovery checks whether destination and temporary paths identify the same file before accepting the existing destination. A different destination is a conflict, never permission to overwrite it.
 
 This is an intentional deviation from a plain rename: cross-platform rename behavior can overwrite existing files. Initial publication requires a local filesystem supporting hard links, such as NTFS, ext4, or APFS. Supporting FAT/exFAT or remote filesystems requires a separately tested no-clobber publication strategy before claiming support.
 
-Successful length checks establish completeness, not authenticity. An optional expected SHA-256 should be verified before publication. Integration tests already compare SHA-256 against known fixtures.
+Successful length checks establish completeness, not authenticity. An optional expected SHA-256 is verified before publication. A mismatch blocks publication; retry downloads fresh bytes. A computed hash without a reference is explicitly distinct from verified integrity.
 
 Process-crash recovery is in scope. Full power-loss durability of directory entries and all filesystem-specific behaviors requires additional platform work and is not claimed by this initial implementation.
 
@@ -613,7 +617,6 @@ Candidates:
 - Connection reuse and keep-alive tuning across queued downloads.
 - Adaptive concurrency based on observed throughput and server limits.
 - Smoother speed and ETA estimation.
-- Retry jitter, HTTP-date Retry-After, and shared per-host cooldown.
 - Optional expected SHA-256 verification before publication.
 - Stronger power-loss and filesystem durability work.
 - Memory and disk-throughput optimizations for multi-gigabyte files.
@@ -639,7 +642,7 @@ Candidates:
 - Range ignored, unknown length, and range support withdrawn after probing.
 - Pause stability, reopen, and offset-aware resume.
 - Changed validators and changed content.
-- Rate limiting and dropped connections.
+- Rate limiting and dropped connections, including numeric and HTTP-date Retry-After and shared per-host cooldown.
 - Incorrect Content-Range rejection.
 - Queue order, concurrency behavior, cancellation, and duplicate destinations.
 - Existing destination appearing mid-download.

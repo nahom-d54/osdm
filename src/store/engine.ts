@@ -19,10 +19,11 @@ export interface EngineStore {
   engineError: string | null;
 
   init(): Promise<void>;
-  enqueue(url: string, destination: string): Promise<void>;
+  enqueue(url: string, destination: string, expectedSha256?: string): Promise<void>;
   pause(id: string): Promise<void>;
   resume(id: string): Promise<void>;
   retry(id: string): Promise<void>;
+  updateUrl(id: string, url: string): Promise<void>;
   cancel(id: string): Promise<void>;
   removeDownload(id: string, removePartialFile: boolean): Promise<void>;
   openFile(id: string): Promise<void>;
@@ -96,17 +97,22 @@ export const useEngine = create<EngineStore>((set, get) => {
       await initializing;
     },
 
-    async enqueue(url, destination) {
+    async enqueue(url, destination, expectedSha256) {
       // Let the add flow show engine rejections in its own surface instead of
       // closing optimistically and only raising a background banner.
       const b = getBridge();
-      await b.enqueue({ url, destination });
+      await b.enqueue({ url, destination, expected_sha256: expectedSha256 || null });
       set({ downloads: await b.snapshot() });
     },
 
     pause: (id) => runCommand((b) => b.pause(id)),
     resume: (id) => runCommand((b) => b.resume(id)),
     retry: (id) => runCommand((b) => b.retry(id)),
+    async updateUrl(id, url) {
+      const b = getBridge();
+      await b.updateUrl(id, url);
+      set({ downloads: await b.snapshot() });
+    },
 
     cancel: async (id) => {
       // Sends cancel including queued/paused; complements per-row pause.

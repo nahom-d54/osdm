@@ -15,6 +15,12 @@ Serde output is consumed verbatim:
 
 - Struct fields use snake_case (`total_bytes`, `eta_seconds`, `temporary_path`,
   `bytes_per_second`, `ready_to_publish`).
+- Optional `expected_sha256`, computed `sha256`, and `integrity` expose checksum
+  verification (`Unverified | Verifying | Computed | Verified | Mismatch`).
+  `Computed` does not mean verified against a reference.
+- Runtime `adaptive` feedback exposes `active_connections`, `host_connections`,
+  `host_limit`, `host_ceiling`, `chunk_bytes`, and a human-readable `reason`.
+  Durable segments are not a count of currently open connections.
 - `DownloadId` is a UUID string; paths serialize as strings.
 - States are `Queued | Downloading | Pausing | Paused | Canceling | Canceled |
   Failed | Completed`.
@@ -28,9 +34,17 @@ Contracts:
 - Pause/cancel drain workers. Cancel retains data and history.
 - Resume is a no-op for queued, active, and completed work; failed/canceled work
   can be requeued. Recovery opens interrupted work paused.
+- Changing a URL is allowed only for fully paused or failed downloads. It persists
+  the new source and leaves the download paused. Resume checks the validator,
+  length, and range support before reusing partial data; incompatible sources restart.
+- HTTP 429/503 responses keep active downloads waiting and retrying automatically,
+  with cancellable host-wide cooldowns and full `Retry-After` waits. Other transient
+  failures use the configured retry budget. While waiting, `error` can contain an
+  informational recovery message even though the state remains `Downloading`.
 - Reorder requires **every currently retained history/queue ID exactly once**.
   After removal, omit the removed ID. Other entries keep their relative order.
-- Concurrency is fixed until the engine is reopened; bandwidth can change live.
+- Concurrency ceilings are fixed until the engine is reopened; actual connections
+  and request sizes adapt live. Bandwidth can change live.
 - Network error strings omit request URLs. Local databases contain source URLs
   and signed query strings and must not be uploaded as diagnostics.
 
@@ -43,9 +57,10 @@ camelCase; nested Rust structs retain snake_case. Errors reject with a string.
 | --- | --- | --- |
 | `engine_open` | `config: Config` | `()` |
 | `engine_shutdown` | — | `()` |
-| `engine_enqueue` | `request: { url, destination }` | UUID string |
+| `engine_enqueue` | `request: { url, destination, expected_sha256?: string }` | UUID string |
 | `engine_probe` | `url: string` | `ProbeInfo` |
 | `engine_pause`, `engine_resume`, `engine_retry`, `engine_cancel` | `id: string` | `()` |
+| `engine_update_url` | `id: string, url: string` | `()` |
 | `engine_reorder` | `ids: string[]` | `()` |
 | `engine_set_speed_limit` | `bytesPerSecond: number` | `()` |
 | `engine_snapshot` | — | `Download[]` |
@@ -70,6 +85,13 @@ plugin. Native dialogs return `null` on cancellation.
 `default_download_directory` returns the OS download folder when it exists and
 falls back to the user home directory, so the add-download dialog never starts
 from a placeholder path that does not exist.
+
+### Replace an expired download link
+
+Select a paused or failed download, open its inspector, and choose **Change URL**
+under **Manifest**. Paste the replacement HTTP(S) link and choose **Save URL**,
+then **Resume**. The destination stays the same. The engine checks whether saved
+bytes still belong to the replacement source before continuing.
 
 ### URL probe — available
 

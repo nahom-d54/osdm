@@ -27,6 +27,7 @@ export interface EngineBridge {
   pause(id: string): Promise<void>;
   resume(id: string): Promise<void>;
   retry(id: string): Promise<void>;
+  updateUrl(id: string, url: string): Promise<void>;
   cancel(id: string): Promise<void>;
   /** Full ordered list of every queue/history id, each exactly once. */
   reorder(ids: string[]): Promise<void>;

@@ -1,5 +1,5 @@
 import type { EngineBridge, EngineErrorListener, SnapshotListener } from "@/lib/bridge/types";
-import type { Download, EngineConfig, UrlProbe } from "@/lib/types";
+import type { Download, DownloadRequest, EngineConfig, UrlProbe } from "@/lib/types";
 import { suggestFilename } from "@/lib/format";
 import { useSettings } from "@/store/settings";
 import type { AppSettings } from "@/store/settings";
@@ -50,7 +50,7 @@ export class TauriBridge implements EngineBridge {
     this.stopSettings = null;
   }
 
-  async enqueue(request: { url: string; destination: string }): Promise<string> {
+  async enqueue(request: DownloadRequest): Promise<string> {
     return this.invoke<string>("engine_enqueue", { request });
   }
 
@@ -68,6 +68,10 @@ export class TauriBridge implements EngineBridge {
 
   async retry(id: string): Promise<void> {
     await this.invoke("engine_retry", { id });
+  }
+
+  async updateUrl(id: string, url: string): Promise<void> {
+    await this.invoke("engine_update_url", { id, url });
   }
 
   async cancel(id: string): Promise<void> {

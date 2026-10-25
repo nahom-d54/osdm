@@ -21,6 +21,7 @@ import { SegmentLanes } from "@/components/SegmentRibbon";
 import { StateChip } from "@/components/StateChip";
 import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/icon-button";
+import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import {
   fileNameOf,
@@ -46,7 +47,7 @@ export function DetailsPanel({ download }: { download: Download | null }) {
           <PanelRight className="size-6 text-faint" strokeWidth={1.5} aria-hidden="true" />
           <p className="font-display text-[15px] font-semibold text-ink-strong">Nothing selected</p>
           <p className="max-w-[15rem] text-[11.5px] leading-relaxed text-muted-foreground">
-            Choose a transfer to inspect its connection lanes, checkpoints, and file location.
+            Choose a transfer to inspect adaptive connections, checkpoints, and file integrity.
           </p>
         </div>
       </aside>
@@ -169,14 +170,16 @@ export function DetailsPanel({ download }: { download: Download | null }) {
         </div>
 
         {download.error && (
-          <div className="mx-4 mt-4 rounded-md border border-danger/25 bg-danger-soft px-3 py-2.5">
+          <div className={cn("mx-4 mt-4 rounded-md border px-3 py-2.5", live ? "border-line bg-panel" : "border-danger/25 bg-danger-soft")}>
             <div className="flex items-start gap-2">
-              <CircleAlert className="mt-px size-3.5 shrink-0 text-danger" strokeWidth={1.75} aria-hidden="true" />
+              <CircleAlert className={cn("mt-px size-3.5 shrink-0", live ? "text-muted-foreground" : "text-danger")} strokeWidth={1.75} aria-hidden="true" />
               <div>
-                <p className="text-[11.5px] font-medium leading-relaxed text-danger">{sentence(download.error)}</p>
-                <p className="mt-1 text-[10.5px] leading-relaxed text-danger/75">
-                  {committed > 0
-                    ? `${formatBytes(committed)} is safe on disk. Retrying continues from that checkpoint.`
+                <p className={cn("text-[11.5px] font-medium leading-relaxed", live ? "text-foreground" : "text-danger")}>{sentence(download.error)}</p>
+                <p className={cn("mt-1 text-[10.5px] leading-relaxed", live ? "text-muted-foreground" : "text-danger/75")}>
+                  {live
+                    ? "Recovery is automatic. You can pause or stop this download while it waits."
+                    : committed > 0
+                    ? `${formatBytes(committed)} is safe on disk. Resume rechecks the file before reusing this progress.`
                     : "No progress was committed. Retry when the server is reachable."}
                 </p>
               </div>
@@ -232,12 +235,41 @@ export function DetailsPanel({ download }: { download: Download | null }) {
 
         <section className="border-b border-line-soft px-4 py-4">
           <div className="mb-3 flex items-baseline justify-between gap-2">
-            <h3 className="eyebrow">Connection lanes</h3>
+            <h3 className="eyebrow">Transfer segments</h3>
             <span className="font-mono text-[9px] text-faint">
               {download.ranged ? "range requests" : "single stream"}
             </span>
           </div>
           <SegmentLanes download={download} />
+          {live && download.adaptive && (
+            <div className="mt-4 rounded-md border border-line-soft px-3 py-2.5" aria-label="Adaptive connections">
+              <div className="flex items-center justify-between gap-2 text-[11px]">
+                <span className="font-medium text-foreground">Adaptive connections</span>
+                <span className="font-mono text-muted-foreground">{download.adaptive.active_connections} active</span>
+              </div>
+              <p className="mt-1.5 text-[10.5px] leading-relaxed text-muted-foreground">{download.adaptive.reason}</p>
+              <p className="mt-2 font-mono text-[9px] text-faint">
+                Host {download.adaptive.host_connections}/{download.adaptive.host_limit} · ceiling {download.adaptive.host_ceiling}
+                {download.ranged && ` · requests up to ${formatBytes(download.adaptive.chunk_bytes)}`}
+              </p>
+            </div>
+          )}
+        </section>
+
+        <section className="border-b border-line-soft px-4 py-4">
+          <h3 className="eyebrow mb-2">Integrity</h3>
+          <p className={cn("text-[11px] leading-relaxed", download.integrity === "Verified" ? "text-ok" : download.integrity === "Mismatch" ? "text-danger" : "text-muted-foreground")} role="status">
+            {download.integrity === "Verified" ? "SHA-256 matches the supplied checksum."
+              : download.integrity === "Verifying" ? "Verifying file contents before publication…"
+              : download.integrity === "Mismatch" ? "Checksum mismatch. Retry downloads a fresh copy."
+              : download.integrity === "Computed" ? "SHA-256 computed. No reference checksum was supplied."
+              : download.expected_sha256 ? "SHA-256 verification pending."
+              : "No reference checksum supplied. The engine computes SHA-256 on completion."}
+          </p>
+          <dl className="mt-2 divide-y divide-line-soft">
+            {download.expected_sha256 && <ManifestRow label="Expected" value={download.expected_sha256} copyable />}
+            {download.sha256 && <ManifestRow label="SHA-256" value={download.sha256} copyable />}
+          </dl>
         </section>
 
         <section className="border-b border-line-soft px-4 py-4">
@@ -252,6 +284,9 @@ export function DetailsPanel({ download }: { download: Download | null }) {
               muted={!download.validator}
             />
           </dl>
+          {(download.state === "Paused" || download.state === "Failed") && (
+            <ChangeUrl key={download.id} download={download} />
+          )}
         </section>
 
         {queueIndex >= 0 && (
@@ -340,6 +375,55 @@ function PanelHeader({ onClose }: { onClose: () => void }) {
         <X strokeWidth={1.75} />
       </IconButton>
     </div>
+  );
+}
+
+function ChangeUrl({ download }: { download: Download }) {
+  const updateUrl = useEngine((state) => state.updateUrl);
+  const [open, setOpen] = useState(false);
+  const [url, setUrl] = useState(download.url);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const parsed = new URL(url.trim());
+      if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) {
+        throw new Error("Use an HTTP(S) URL without embedded credentials.");
+      }
+      await updateUrl(download.id, parsed.toString());
+      setOpen(false);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <>
+      <Button variant="secondary" size="sm" className="mt-3 w-full" onClick={() => {
+        setUrl(download.url);
+        setError(null);
+        setOpen(true);
+      }}>Change URL</Button>
+      <Modal
+        open={open}
+        onOpenChange={(value) => { if (!saving) setOpen(value); }}
+        title="Change download URL"
+        description="Paste a fresh link, then resume when ready. Saved progress is reused if the server confirms the same file; otherwise the transfer restarts from zero."
+        footer={<>
+          <Button variant="ghost" disabled={saving} onClick={() => setOpen(false)}>Cancel</Button>
+          <Button disabled={saving || !url.trim()} onClick={() => void save()}>{saving ? "Saving…" : "Save URL"}</Button>
+        </>}
+      >
+        <label htmlFor="replacement-url" className="mb-2 block text-xs text-muted-foreground">Download URL</label>
+        <Input id="replacement-url" type="url" value={url} onChange={(event) => setUrl(event.target.value)} disabled={saving} invalid={!!error} aria-describedby={error ? "replacement-url-error" : undefined} />
+        {error && <p id="replacement-url-error" role="alert" className="mt-2 text-xs text-danger">{error}</p>}
+      </Modal>
+    </>
   );
 }
 

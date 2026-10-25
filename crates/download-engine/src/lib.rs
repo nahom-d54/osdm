@@ -1,7 +1,10 @@
 #![doc = include_str!("../README.md")]
+mod adaptive;
 mod cleanup;
 mod engine;
+mod integrity;
 mod model;
+mod retry;
 mod store;
 #[cfg(debug_assertions)]
 #[doc(hidden)]
@@ -33,8 +36,15 @@ pub enum Error {
     Range,
     #[error("response length does not match the expected size")]
     Length,
+    #[error(
+        "SHA-256 checksum mismatch; the file was not published. Retry to download a fresh copy"
+    )]
+    Integrity,
     #[error("operation interrupted")]
     Interrupted,
+    #[doc(hidden)]
+    #[error("connection rescheduled by adaptive controller")]
+    Rebalance,
     #[error("engine is shut down")]
     Shutdown,
 }

@@ -4,8 +4,11 @@ A Rust + TypeScript desktop download manager, starting with a standalone Rust do
 
 - **[Priority-driven product and engineering plan](PLAN.md)**
 - **[Engine documentation](crates/download-engine/README.md)**
+- **[Intelligent download phases](docs/intelligent-downloads.md)**
 
-`src/` and `src-tauri/` are reserved for the future UI and desktop shell. They are not implemented yet.
+`src/` contains the desktop UI and `src-tauri/` contains its native shell. The
+engine supports adaptive connection limits, recoverable ranged transfers, and
+optional SHA-256 verification before publication.
 
 ## Development
 

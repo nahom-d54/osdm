@@ -13,6 +13,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let id = engine.enqueue(DownloadRequest {
         url: "https://example.com/file.zip".into(),
         destination: std::env::current_dir()?.join("file.zip"),
+        expected_sha256: None,
     }).await?;
 
     loop {
@@ -32,11 +33,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## Behavior
 
 - Segments files above `split_threshold` when range support and a resource validator are available.
+- Connection settings are ceilings. A shared host controller starts with at most two connections, samples throughput, cautiously tests additional connections, and scales back on rate limits, errors, latency spikes, stalls, or unhelpful extra concurrency. Excess ranged requests checkpoint and yield; non-resumable streams are allowed to finish.
+- Ranged workers fetch adaptive subrequests (256 KiB–8 MiB) within durable segments. Congestion shrinks requests and raises the retry floor. User speed limits suspend throughput tuning, not error-driven backoff.
 - Uses a strong ETag when available, otherwise Last-Modified. Missing validators use a single stream.
 - Stores progress in SQLite and syncs bytes before committing recoverable offsets.
 - Recovers interrupted downloads as paused. Resume explicitly after reopening.
 - Pause/cancel drain workers before returning. Cancellation keeps partial data.
 - `retry` requeues failed/canceled work and revalidates it before resuming.
+- Retries transient failures with exponential backoff and jitter (fallback capped at 120 seconds). `Retry-After` (delta-seconds or HTTP-date) is never shortened. Active downloads keep retrying HTTP 429/503 automatically without exhausting the retry budget. A rate-limited host shares one cooldown window across workers and downloads, and every wait is cancellable.
+- `update_url` replaces the source of paused/failed downloads and leaves them paused. Resume reuses checkpoints only when range support, validator, and length still match; otherwise it restarts safely.
+- Computes SHA-256 before publication with bounded memory and cancellable reads. `DownloadRequest.expected_sha256` optionally supplies a 64-digit publisher/user checksum. A mismatch fails without publication; retry discards that partial and downloads fresh bytes. Without a reference, `Computed` is distinct from `Verified`.
 - `probe` reads the final URL, Content-Disposition filename, content type, length, and range support without enqueueing. Path components are stripped from server filenames; the desktop workflow applies filesystem-specific sanitization.
 - `reorder` requires every history/queue ID exactly once.
 - `subscribe` provides full snapshots at up to 4 Hz. Refresh using `snapshot` after subscriber lag.
@@ -59,14 +65,15 @@ The database contains full source URLs, including signed query strings. Do not p
 ## Current limits
 
 - Direct URLs only; no browser cookies, custom authentication headers, proxy configuration, or media extraction.
-- No expected-checksum input yet; transfer length checks do not prove authenticity.
+- No HTTP response cache: file bodies are streamed to disk once, and durable checkpoints already avoid re-fetching committed ranges.
+- SHA-256 verification needs a trustworthy reference supplied by the user/publisher. Computing a hash alone does not establish authenticity; chunk-level corruption cannot be localized without trusted per-chunk hashes.
 - Partial cleanup is explicit, not automatic. Unrecorded `.part` files are left alone.
 - Process-exit recovery is tested; power-loss directory durability is not guaranteed.
-- Numeric Retry-After is honored on transfer retries, capped at 120 seconds; HTTP-date values and probe Retry-After need follow-up.
+- Other transient errors and standalone metadata probes are bounded by `max_retries`. Persistent rate limiting keeps a download active until recovery, pause, or cancellation.
 - Changing the bandwidth limit wakes existing throttle waits; low-speed transfers remain cancellable.
-- Fixed segmentation rather than adaptive work stealing; instantaneous speed/ETA may fluctuate.
+- Durable segment layouts remain fixed while request sizes and active connections adapt. Dynamic work stealing is not implemented; instantaneous speed/ETA may fluctuate.
 - Server validators must be truthful. Last-Modified has weaker identity guarantees than strong ETags.
-- Schema revision 2 adds the orphan-partial ledger. Revision 0/1 migrates transactionally; newer revisions are rejected. Revision-1 applications reject revision 2, so downgrading requires restoring a compatible backup.
+- Schema revision 3 adds integrity requirements. Revisions 0/1/2 migrate transactionally with unverified defaults; newer revisions are rejected. Older engines reject revision 3 rather than ignoring checksum requirements, so downgrading requires restoring a compatible backup.
 
 ## Testing
 

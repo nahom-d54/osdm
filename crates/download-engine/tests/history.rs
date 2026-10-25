@@ -6,6 +6,7 @@ async fn stopped(engine: &Engine, dir: &TempDir, name: &str) -> Download {
         .enqueue(DownloadRequest {
             url: "http://127.0.0.1:9/file".into(),
             destination: dir.path().join(name),
+            expected_sha256: None,
         })
         .await
         .unwrap();
@@ -160,7 +161,7 @@ async fn revision_one_migration_preserves_history_and_creates_orphan_ledger() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(version, 2); // Revision-one releases reject this rather than silently discarding the ledger.
+    assert_eq!(version, 3); // Revision-one releases reject this rather than silently discarding the ledger.
     pool.close().await;
 }
 

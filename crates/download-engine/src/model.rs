@@ -51,6 +51,9 @@ pub struct DownloadRequest {
     pub url: String,
     /// Absolute destination filename; existing files are never overwritten.
     pub destination: PathBuf,
+    /// SHA-256 supplied by the publisher/user. Hexadecimal, exactly 64 digits.
+    #[serde(default)]
+    pub expected_sha256: Option<String>,
 }
 
 /// Metadata read from a URL before it is enqueued. No queue entry is created.
@@ -104,10 +107,40 @@ pub struct Download {
     pub error: Option<String>,
     pub bytes_per_second: u64,
     pub eta_seconds: Option<u64>,
+    /// Runtime feedback, not recovered from a previous process.
+    #[serde(default, skip_deserializing)]
+    pub adaptive: Option<AdaptiveStatus>,
+    #[serde(default)]
+    pub expected_sha256: Option<String>,
+    #[serde(default)]
+    pub sha256: Option<String>,
+    #[serde(default)]
+    pub integrity: IntegrityStatus,
     pub(crate) validator: Option<String>,
     pub(crate) ranged: bool,
     /// Durable intent used to recover a crash during final publication.
     pub(crate) ready_to_publish: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IntegrityStatus {
+    #[default]
+    Unverified,
+    Verifying,
+    /// A hash was computed, but no trusted reference was supplied.
+    Computed,
+    Verified,
+    Mismatch,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AdaptiveStatus {
+    pub active_connections: usize,
+    pub host_connections: usize,
+    pub host_limit: usize,
+    pub host_ceiling: usize,
+    pub chunk_bytes: u64,
+    pub reason: String,
 }
 
 impl Download {

@@ -40,6 +40,17 @@ export interface Download {
   validator: string | null;
   ranged: boolean;
   ready_to_publish?: boolean;
+  adaptive?: {
+    active_connections: number;
+    host_connections: number;
+    host_limit: number;
+    host_ceiling: number;
+    chunk_bytes: number;
+    reason: string;
+  } | null;
+  expected_sha256?: string | null;
+  sha256?: string | null;
+  integrity?: "Unverified" | "Verifying" | "Computed" | "Verified" | "Mismatch";
 }
 
 export type EngineConfig = {
@@ -57,6 +68,7 @@ export interface DownloadRequest {
   url: string;
   /** Absolute destination filename; the engine never overwrites. */
   destination: string;
+  expected_sha256?: string | null;
 }
 
 /** Metadata returned by a pre-download probe; no queue entry is created. */

@@ -19,7 +19,7 @@ use std::{
 };
 use tempfile::TempDir;
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Mode {
     Ranges,
     IgnoreRanges,
@@ -27,7 +27,10 @@ enum Mode {
     IgnoreAfterProbe,
     WrongRange,
     Retry,
+    RetryDate,
+    RetryMany,
     Disconnect,
+    TruncateRepeatedly,
     NoValidator,
 }
 
@@ -38,6 +41,7 @@ struct ServerState {
     requests: AtomicUsize,
     active: AtomicUsize,
     max_active: AtomicUsize,
+    truncated: AtomicUsize,
 }
 
 struct ActiveGuard(Arc<ServerState>);
@@ -70,6 +74,7 @@ async fn server(mode: Mode) -> Server {
         requests: AtomicUsize::new(0),
         active: AtomicUsize::new(0),
         max_active: AtomicUsize::new(0),
+        truncated: AtomicUsize::new(0),
     });
     let router = Router::new()
         .route("/file", get(handler))
@@ -241,11 +246,34 @@ async fn handler(State(state): State<Arc<ServerState>>, headers: HeaderMap) -> R
             .body(Body::empty())
             .unwrap();
     }
+    if state.mode == Mode::RetryDate && request == 1 {
+        // Two seconds in the future so the integer-second HTTP-date is always
+        // more than one second away, even when the current time is near a
+        // second boundary.
+        let when = httpdate::fmt_http_date(std::time::SystemTime::now() + Duration::from_secs(2));
+        return Response::builder()
+            .status(429)
+            .header("retry-after", when)
+            .body(Body::empty())
+            .unwrap();
+    }
+    if state.mode == Mode::RetryMany && request < 2 {
+        return Response::builder()
+            .status(429)
+            .header("retry-after", "0")
+            .body(Body::empty())
+            .unwrap();
+    }
     let (content, etag) = state.content.lock().unwrap().clone();
     let total = content.len();
     let honor = matches!(
         state.mode,
-        Mode::Ranges | Mode::WrongRange | Mode::Retry | Mode::Disconnect | Mode::NoValidator
+        Mode::Ranges
+            | Mode::WrongRange
+            | Mode::Retry
+            | Mode::Disconnect
+            | Mode::TruncateRepeatedly
+            | Mode::NoValidator
     ) || (state.mode == Mode::IgnoreAfterProbe
         && range.as_deref() == Some("bytes=0-0"));
     let mut response = Response::builder();
@@ -284,20 +312,34 @@ async fn handler(State(state): State<Arc<ServerState>>, headers: HeaderMap) -> R
     if state.mode != Mode::UnknownLength {
         response = response.header("content-length", bytes.len());
     }
-    let disconnect = state.mode == Mode::Disconnect && request == 1;
+    let truncate_repeatedly = state.mode == Mode::TruncateRepeatedly && bytes.len() > 1536 * 1024;
+    let disconnect = (state.mode == Mode::Disconnect && request == 1) || truncate_repeatedly;
+    if truncate_repeatedly {
+        state.truncated.fetch_add(1, Ordering::SeqCst);
+    }
+    let fail_after = if truncate_repeatedly {
+        1536 * 1024
+    } else {
+        64 * 1024
+    };
+    let stream_delay = if state.mode == Mode::TruncateRepeatedly {
+        Duration::from_millis(10)
+    } else {
+        Duration::from_millis(2)
+    };
     let stream = futures_util::stream::unfold(
         (bytes, 0, guard),
         move |(bytes, offset, guard)| async move {
             if offset >= bytes.len() {
                 return None;
             }
-            if disconnect && offset >= 64 * 1024 {
+            if disconnect && offset >= fail_after {
                 return Some((
                     Err::<Vec<u8>, std::io::Error>(std::io::Error::other("connection dropped")),
                     (bytes.clone(), bytes.len(), guard),
                 ));
             }
-            tokio::time::sleep(Duration::from_millis(2)).await;
+            tokio::time::sleep(stream_delay).await;
             let end = (offset + 64 * 1024).min(bytes.len());
             let chunk = bytes[offset..end].to_vec();
             Some((Ok(chunk), (bytes, end, guard)))
@@ -324,6 +366,7 @@ async fn add(
         .enqueue(DownloadRequest {
             url: server.url.clone(),
             destination: dir.path().join(name),
+            expected_sha256: None,
         })
         .await
         .unwrap()
@@ -476,6 +519,46 @@ async fn pause_reopen_and_resume_preserves_durable_ranges() {
 }
 
 #[tokio::test]
+async fn resumed_segment_layout_obeys_lower_current_connection_ceiling() {
+    let server = server(Mode::Ranges).await;
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("queue.db");
+    let initial = Config {
+        connections_per_download: 4,
+        bytes_per_second: 1024 * 1024,
+        ..config()
+    };
+    let engine = Engine::open(&db, initial).await.unwrap();
+    let id = add(&engine, &server, &dir, "lower-ceiling.bin").await;
+    wait(&engine, id, |d| d.downloaded_bytes() > 64 * 1024).await;
+    engine.pause(id).await.unwrap();
+    let paused = engine.snapshot().await.remove(0);
+    assert_eq!(
+        paused.segments.len(),
+        4,
+        "fixture needs a four-lane saved layout"
+    );
+    engine.shutdown().await.unwrap();
+    drop(engine);
+
+    server.state.active.store(0, Ordering::SeqCst);
+    server.state.max_active.store(0, Ordering::SeqCst);
+    let resumed_config = Config {
+        connections_per_download: 1,
+        ..config()
+    };
+    let engine = Engine::open(&db, resumed_config).await.unwrap();
+    engine.resume(id).await.unwrap();
+    verify(&engine, &server, id).await;
+    let observed = server.state.max_active.load(Ordering::SeqCst);
+    assert!(
+        observed <= 1,
+        "resumed download exceeded its current one-connection cap: {observed}"
+    );
+    engine.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn changed_remote_file_restarts_instead_of_mixing_bytes() {
     let server = server(Mode::Ranges).await;
     let dir = TempDir::new().unwrap();
@@ -495,18 +578,298 @@ async fn changed_remote_file_restarts_instead_of_mixing_bytes() {
 }
 
 #[tokio::test]
+async fn checksum_mismatch_is_not_published_and_retry_redownloads_for_verification() {
+    let server = server(Mode::Ranges).await;
+    let dir = TempDir::new().unwrap();
+    let engine = Engine::open(dir.path().join("queue.db"), config())
+        .await
+        .unwrap();
+    let intended = vec![91; 2 * 1024 * 1024];
+    let expected = format!("{:x}", Sha256::digest(&intended));
+    let id = engine
+        .enqueue(DownloadRequest {
+            url: server.url.clone(),
+            destination: dir.path().join("verified.bin"),
+            expected_sha256: Some(expected.clone()),
+        })
+        .await
+        .unwrap();
+    let failed = wait(&engine, id, |d| d.state == DownloadState::Failed).await;
+    assert_eq!(failed.integrity, download_engine::IntegrityStatus::Mismatch);
+    assert!(
+        !failed.destination.exists(),
+        "mismatched bytes were published"
+    );
+
+    *server.state.content.lock().unwrap() = (intended.clone(), "\"v2\"".into());
+    engine.retry(id).await.unwrap();
+    let completed = verify(&engine, &server, id).await;
+    assert_eq!(
+        completed.integrity,
+        download_engine::IntegrityStatus::Verified
+    );
+    assert_eq!(completed.sha256.as_deref(), Some(expected.as_str()));
+    engine.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn expected_checksum_persists_across_restart_and_is_verified() {
+    let server = server(Mode::Ranges).await;
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("queue.db");
+    let expected = {
+        let content = server.state.content.lock().unwrap().0.clone();
+        format!("{:x}", Sha256::digest(content))
+    };
+    let mut cfg = config();
+    cfg.bytes_per_second = 1024 * 1024;
+    let engine = Engine::open(&db, cfg).await.unwrap();
+    let id = engine
+        .enqueue(DownloadRequest {
+            url: server.url.clone(),
+            destination: dir.path().join("verified-restart.bin"),
+            expected_sha256: Some(expected.clone()),
+        })
+        .await
+        .unwrap();
+    wait(&engine, id, |download| {
+        download.downloaded_bytes() > 64 * 1024
+    })
+    .await;
+    engine.pause(id).await.unwrap();
+    engine.shutdown().await.unwrap();
+    drop(engine);
+
+    let engine = Engine::open(&db, config()).await.unwrap();
+    assert_eq!(
+        engine.snapshot().await[0].expected_sha256.as_deref(),
+        Some(expected.as_str())
+    );
+    engine.resume(id).await.unwrap();
+    let completed = verify(&engine, &server, id).await;
+    assert_eq!(
+        completed.integrity,
+        download_engine::IntegrityStatus::Verified
+    );
+    engine.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn congestion_adapts_ranged_subrequests_without_gaps_or_overlap() {
+    let server = server(Mode::Retry).await;
+    let dir = TempDir::new().unwrap();
+    let engine = Engine::open(dir.path().join("queue.db"), config())
+        .await
+        .unwrap();
+    let id = add(&engine, &server, &dir, "adaptive.bin").await;
+    verify(&engine, &server, id).await;
+    let size = server.state.content.lock().unwrap().0.len() as u64;
+    let ranges = server.state.ranges.lock().unwrap();
+    let requests: Vec<(u64, u64)> = ranges
+        .iter()
+        .filter(|range| range.as_str() != "bytes=0-0")
+        .map(|range| {
+            let (start, end) = range
+                .strip_prefix("bytes=")
+                .unwrap()
+                .split_once('-')
+                .unwrap();
+            (start.parse().unwrap(), end.parse::<u64>().unwrap() + 1)
+        })
+        .collect();
+    assert!(!requests.is_empty());
+    for (start, end) in requests {
+        assert!(start < size, "request started beyond resource end");
+        assert!(
+            end - start <= 512 * 1024,
+            "adaptive chunk exceeded reduced size"
+        );
+    }
+    engine.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn retries_rate_limits_and_broken_connections() {
-    for mode in [Mode::Retry, Mode::Disconnect] {
+    for (mode, minimum_wait) in [
+        // Retry-After: 0 must still back off exponentially instead of hammering.
+        (Mode::Retry, Duration::from_millis(900)),
+        (Mode::Disconnect, Duration::ZERO),
+    ] {
         let server = server(mode).await;
         let dir = TempDir::new().unwrap();
         let engine = Engine::open(dir.path().join("queue.db"), config())
             .await
             .unwrap();
+        let started = Instant::now();
         let id = add(&engine, &server, &dir, "file.bin").await;
         verify(&engine, &server, id).await;
+        assert!(
+            started.elapsed() >= minimum_wait,
+            "{mode:?} retried too early"
+        );
         assert!(server.state.requests.load(Ordering::SeqCst) > 5);
         engine.shutdown().await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn repeated_truncations_reset_retry_budget_after_checkpointed_progress() {
+    let server = server(Mode::TruncateRepeatedly).await;
+    let content: Vec<u8> = (0..32 * 1024 * 1024).map(|i| (i % 251) as u8).collect();
+    *server.state.content.lock().unwrap() = (content, "\"large-v1\"".into());
+    let dir = TempDir::new().unwrap();
+    let cfg = Config {
+        connections_per_download: 1,
+        max_retries: 1,
+        ..config()
+    };
+    let engine = Engine::open(dir.path().join("queue.db"), cfg)
+        .await
+        .unwrap();
+    let id = add(&engine, &server, &dir, "truncated-retries.bin").await;
+    let completed = tokio::time::timeout(Duration::from_secs(90), async {
+        loop {
+            let download = engine
+                .snapshot()
+                .await
+                .into_iter()
+                .find(|download| download.id == id)
+                .unwrap();
+            if download.state == DownloadState::Completed {
+                break download;
+            }
+            assert_ne!(
+                download.state,
+                DownloadState::Failed,
+                "{:?}",
+                download.error
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("repeated truncations prevented recovery");
+    let output = tokio::fs::read(&completed.destination).await.unwrap();
+    let expected = server.state.content.lock().unwrap().0.clone();
+    assert_eq!(Sha256::digest(&output), Sha256::digest(expected));
+    assert!(
+        server.state.truncated.load(Ordering::SeqCst) > 1,
+        "expected more truncations than the configured retry budget"
+    );
+    assert_eq!(completed.downloaded_bytes(), 32 * 1024 * 1024);
+
+    let ranges = server.state.ranges.lock().unwrap();
+    let starts: Vec<u64> = ranges
+        .iter()
+        .filter(|range| range.as_str() != "bytes=0-0")
+        .map(|range| {
+            range
+                .strip_prefix("bytes=")
+                .unwrap()
+                .split_once('-')
+                .unwrap()
+                .0
+                .parse()
+                .unwrap()
+        })
+        .collect();
+    assert!(starts.len() > 2, "expected multiple ranged subrequests");
+    assert_eq!(starts[0], 0);
+    assert!(
+        starts.windows(2).all(|pair| pair[1] > pair[0]),
+        "subrequests restarted or failed to advance at saved offsets: {starts:?}"
+    );
+    engine.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn persistent_rate_limits_retry_beyond_configured_retry_count() {
+    let server = server(Mode::RetryMany).await;
+    let dir = TempDir::new().unwrap();
+    let engine = Engine::open(dir.path().join("queue.db"), config())
+        .await
+        .unwrap();
+    let id = add(&engine, &server, &dir, "file.bin").await;
+    verify(&engine, &server, id).await;
+    assert!(server.state.requests.load(Ordering::SeqCst) >= 3);
+    engine.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn update_url_persists_and_reuses_checkpoint_for_same_representation() {
+    let original = server(Mode::Ranges).await;
+    let replacement = server(Mode::Ranges).await;
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("queue.db");
+    let mut cfg = config();
+    cfg.bytes_per_second = 1024 * 1024;
+    let engine = Engine::open(&db, cfg).await.unwrap();
+    let id = add(&engine, &original, &dir, "file.bin").await;
+    wait(&engine, id, |d| d.downloaded_bytes() > 64 * 1024).await;
+    engine.pause(id).await.unwrap();
+    let before = engine.snapshot().await.remove(0);
+    engine.update_url(id, &replacement.url).await.unwrap();
+    let updated = engine.snapshot().await.remove(0);
+    assert_eq!(updated.state, DownloadState::Paused);
+    assert_eq!(updated.url, replacement.url);
+    assert_eq!(updated.downloaded_bytes(), before.downloaded_bytes());
+    engine.shutdown().await.unwrap();
+
+    let engine = Engine::open(&db, config()).await.unwrap();
+    let persisted = engine.snapshot().await.remove(0);
+    assert_eq!(persisted.url, replacement.url);
+    assert_eq!(persisted.downloaded_bytes(), before.downloaded_bytes());
+    replacement.state.ranges.lock().unwrap().clear();
+    engine.resume(id).await.unwrap();
+    verify(&engine, &replacement, id).await;
+    let requests = replacement.state.ranges.lock().unwrap();
+    assert!(persisted.segments.iter().any(|segment| {
+        segment.committed > 0
+            && Some(segment.start + segment.committed) != segment.end
+            && requests.contains(&format!(
+                "bytes={}-{}",
+                segment.start + segment.committed,
+                segment.end.unwrap() - 1
+            ))
+    }));
+    drop(requests);
+    engine.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn update_url_rejects_invalid_url_and_active_or_queued_downloads() {
+    let server = server(Mode::Ranges).await;
+    let dir = TempDir::new().unwrap();
+    let engine = Engine::open(dir.path().join("queue.db"), config())
+        .await
+        .unwrap();
+    let id = add(&engine, &server, &dir, "file.bin").await;
+    assert!(engine.update_url(id, "not a URL").await.is_err());
+    assert!(engine.update_url(id, &server.url).await.is_err());
+    engine.pause(id).await.unwrap();
+    engine.update_url(id, &server.url).await.unwrap();
+    engine.resume(id).await.unwrap();
+    let completed = verify(&engine, &server, id).await;
+    assert!(engine.update_url(id, &server.url).await.is_err());
+    assert!(completed.downloaded_bytes() > 0);
+    engine.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn honors_http_date_retry_after() {
+    let server = server(Mode::RetryDate).await;
+    let dir = TempDir::new().unwrap();
+    let engine = Engine::open(dir.path().join("queue.db"), config())
+        .await
+        .unwrap();
+    let started = Instant::now();
+    let id = add(&engine, &server, &dir, "file.bin").await;
+    verify(&engine, &server, id).await;
+    assert!(
+        started.elapsed() >= Duration::from_secs(1),
+        "HTTP-date Retry-After was not honored"
+    );
+    engine.shutdown().await.unwrap();
 }
 
 #[tokio::test]
@@ -543,7 +906,8 @@ async fn queue_cancel_reorder_and_destination_conflicts() {
         engine
             .enqueue(DownloadRequest {
                 url: server.url.clone(),
-                destination: dir.path().join("first.bin")
+                destination: dir.path().join("first.bin"),
+                expected_sha256: None,
             })
             .await
             .is_err()
@@ -642,6 +1006,7 @@ async fn process_exit_child() {
         .enqueue(DownloadRequest {
             url: std::env::var("OSDM_CRASH_TEST_URL").unwrap(),
             destination: directory.join("crash.bin"),
+            expected_sha256: None,
         })
         .await
         .unwrap();
@@ -792,6 +1157,59 @@ async fn cancellation_during_checkpoint_drains_and_preserves_progress() {
 
 #[cfg(debug_assertions)]
 #[tokio::test]
+async fn cancellation_during_hashing_preserves_checkpoints_and_can_resume() {
+    let server = server(Mode::Ranges).await;
+    let dir = TempDir::new().unwrap();
+    let expected = {
+        let content = server.state.content.lock().unwrap().0.clone();
+        format!("{:x}", Sha256::digest(content))
+    };
+    let engine = Engine::open(dir.path().join("queue.db"), config())
+        .await
+        .unwrap();
+    let id = engine
+        .enqueue(DownloadRequest {
+            url: server.url.clone(),
+            destination: dir.path().join("hash-cancel.bin"),
+            expected_sha256: Some(expected),
+        })
+        .await
+        .unwrap();
+    let gate = test_faults::block_hashing(id);
+    tokio::time::timeout(Duration::from_secs(20), gate.wait_until_blocked())
+        .await
+        .expect("hashing gate was not reached");
+    let verifying = engine.snapshot().await.remove(0);
+    assert_eq!(
+        verifying.integrity,
+        download_engine::IntegrityStatus::Verifying
+    );
+
+    tokio::time::timeout(Duration::from_secs(5), engine.cancel(id))
+        .await
+        .expect("cancel did not interrupt hashing")
+        .unwrap();
+    let canceled = wait(&engine, id, |d| d.state == DownloadState::Canceled).await;
+    assert!(!canceled.destination.exists());
+    assert!(canceled.downloaded_bytes() > 0);
+    assert!(
+        canceled
+            .segments
+            .iter()
+            .all(|segment| segment.downloaded == segment.committed)
+    );
+
+    engine.resume(id).await.unwrap();
+    let completed = verify(&engine, &server, id).await;
+    assert_eq!(
+        completed.integrity,
+        download_engine::IntegrityStatus::Verified
+    );
+    engine.shutdown().await.unwrap();
+}
+
+#[cfg(debug_assertions)]
+#[tokio::test]
 async fn cancellation_before_publication_prevents_link() {
     let server = server(Mode::Ranges).await;
     let dir = TempDir::new().unwrap();
@@ -883,6 +1301,55 @@ async fn publication_failure_after_ready_marker_retries() {
     test_faults::clear(id);
     engine.retry(id).await.unwrap();
     verify(&engine, &server, id).await;
+    engine.shutdown().await.unwrap();
+}
+
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn corrupted_publication_recovery_is_rejected_then_redownloaded() {
+    let server = server(Mode::Ranges).await;
+    let dir = TempDir::new().unwrap();
+    let expected = {
+        let content = server.state.content.lock().unwrap().0.clone();
+        format!("{:x}", Sha256::digest(content))
+    };
+    let engine = Engine::open(dir.path().join("queue.db"), config())
+        .await
+        .unwrap();
+    let id = engine
+        .enqueue(DownloadRequest {
+            url: server.url.clone(),
+            destination: dir.path().join("recovery.bin"),
+            expected_sha256: Some(expected),
+        })
+        .await
+        .unwrap();
+    test_faults::fail_publication(id);
+    let failed = wait(&engine, id, |d| d.state == DownloadState::Failed).await;
+    assert!(!failed.destination.exists());
+    assert!(failed.temporary_path.exists());
+    assert_eq!(failed.integrity, download_engine::IntegrityStatus::Verified);
+
+    tokio::fs::write(&failed.temporary_path, vec![0xA5; 2 * 1024 * 1024])
+        .await
+        .unwrap();
+    engine.retry(id).await.unwrap();
+    let mismatch = wait(&engine, id, |d| {
+        d.state == DownloadState::Failed
+            && d.integrity == download_engine::IntegrityStatus::Mismatch
+    })
+    .await;
+    assert!(
+        !mismatch.destination.exists(),
+        "corrupt recovery was published"
+    );
+
+    engine.retry(id).await.unwrap();
+    let completed = verify(&engine, &server, id).await;
+    assert_eq!(
+        completed.integrity,
+        download_engine::IntegrityStatus::Verified
+    );
     engine.shutdown().await.unwrap();
 }
 
@@ -1003,17 +1470,54 @@ async fn schema_initializes_and_rejects_newer_or_corrupt_databases() {
     let engine = Engine::open(&fresh, config()).await.unwrap();
     engine.shutdown().await.unwrap();
     drop(engine);
-    assert_eq!(database_version(&fresh).await, 2);
+    assert_eq!(database_version(&fresh).await, 3);
 
     let unversioned = dir.path().join("unversioned.db");
     create_database(&unversioned, 0, None).await;
     let engine = Engine::open(&unversioned, config()).await.unwrap();
     engine.shutdown().await.unwrap();
     drop(engine);
-    assert_eq!(database_version(&unversioned).await, 2);
+    assert_eq!(database_version(&unversioned).await, 3);
+
+    let revision_two = dir.path().join("revision-two.db");
+    create_database(&revision_two, 2, None).await;
+    let engine = Engine::open(&revision_two, config()).await.unwrap();
+    engine.shutdown().await.unwrap();
+    drop(engine);
+    assert_eq!(database_version(&revision_two).await, 3);
+
+    let legacy = dir.path().join("legacy-download.db");
+    let payload = serde_json::json!({
+        "id": "00000000-0000-0000-0000-000000000001",
+        "url": "http://example.test/file",
+        "destination": dir.path().join("legacy.bin"),
+        "temporary_path": dir.path().join("legacy.part"),
+        "state": "Paused",
+        "total_bytes": null,
+        "segments": [],
+        "error": null,
+        "bytes_per_second": 0,
+        "eta_seconds": null,
+        "validator": null,
+        "ranged": false,
+        "ready_to_publish": false
+    });
+    create_database(&legacy, 2, Some(&payload.to_string())).await;
+    let engine = Engine::open(&legacy, config()).await.unwrap();
+    let migrated = engine.snapshot().await.remove(0);
+    assert_eq!(migrated.expected_sha256, None);
+    assert_eq!(migrated.sha256, None);
+    assert_eq!(
+        migrated.integrity,
+        download_engine::IntegrityStatus::Unverified
+    );
+    assert!(migrated.adaptive.is_none());
+    engine.shutdown().await.unwrap();
+    drop(engine);
+    assert_eq!(database_version(&legacy).await, 3);
 
     let newer = dir.path().join("newer.db");
-    create_database(&newer, 3, None).await;
+    create_database(&newer, 4, None).await;
     let error = match Engine::open(&newer, config()).await {
         Ok(_) => panic!("newer schema was accepted"),
         Err(error) => error,
@@ -1049,6 +1553,7 @@ async fn windows_long_path_download() {
         .enqueue(DownloadRequest {
             url: server.url.clone(),
             destination,
+            expected_sha256: None,
         })
         .await
         .unwrap();
@@ -1068,6 +1573,7 @@ async fn windows_unicode_destination() {
         .enqueue(DownloadRequest {
             url: server.url.clone(),
             destination: dir.path().join("ダウンロード-测试-🚀.bin"),
+            expected_sha256: None,
         })
         .await
         .unwrap();
@@ -1088,6 +1594,7 @@ async fn windows_case_insensitive_destination_is_reserved() {
         .enqueue(DownloadRequest {
             url: server.url.clone(),
             destination: dir.path().join("case.bin"),
+            expected_sha256: None,
         })
         .await;
     assert!(duplicate.is_err());
@@ -1098,6 +1605,7 @@ async fn windows_case_insensitive_destination_is_reserved() {
         .enqueue(DownloadRequest {
             url: server.url.clone(),
             destination: dir.path().join("CASE.BIN"),
+            expected_sha256: None,
         })
         .await;
     assert!(existing.is_err());
@@ -1178,6 +1686,7 @@ async fn multi_gigabyte_download_keeps_memory_bounded() {
         .enqueue(DownloadRequest {
             url: server.url.clone(),
             destination: dir.path().join("large.bin"),
+            expected_sha256: None,
         })
         .await
         .unwrap();

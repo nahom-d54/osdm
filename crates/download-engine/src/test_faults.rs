@@ -68,6 +68,7 @@ struct Hooks {
     checkpoint_gates: HashMap<DownloadId, Arc<Gate>>,
     publication_entry_gates: HashMap<DownloadId, Arc<Gate>>,
     publication_gates: HashMap<DownloadId, Arc<Gate>>,
+    hashing_gates: HashMap<DownloadId, Arc<Gate>>,
     fail_checkpoint: HashSet<DownloadId>,
     fail_publication: HashSet<DownloadId>,
 }
@@ -110,6 +111,17 @@ pub fn block_publication(id: DownloadId) -> Arc<Gate> {
     gate
 }
 
+/// Block verification after the first block has been hashed.
+pub fn block_hashing(id: DownloadId) -> Arc<Gate> {
+    let gate = Gate::new();
+    hooks()
+        .lock()
+        .unwrap()
+        .hashing_gates
+        .insert(id, gate.clone());
+    gate
+}
+
 /// Fail the next checkpoint with a simulated disk-full error.
 pub fn fail_checkpoint(id: DownloadId) {
     hooks().lock().unwrap().fail_checkpoint.insert(id);
@@ -126,6 +138,7 @@ pub fn clear(id: DownloadId) {
     hooks.checkpoint_gates.remove(&id);
     hooks.publication_entry_gates.remove(&id);
     hooks.publication_gates.remove(&id);
+    hooks.hashing_gates.remove(&id);
     hooks.fail_checkpoint.remove(&id);
     hooks.fail_publication.remove(&id);
 }
@@ -138,6 +151,13 @@ pub(crate) async fn checkpoint(id: DownloadId) -> Option<io::Error> {
     }
     let fail = hooks().lock().unwrap().fail_checkpoint.remove(&id);
     fail.then(|| io::Error::other("injected disk full"))
+}
+
+pub(crate) async fn hashing(id: DownloadId) {
+    let gate = hooks().lock().unwrap().hashing_gates.remove(&id);
+    if let Some(gate) = gate {
+        gate.block().await;
+    }
 }
 
 pub(crate) async fn publication_entry(id: DownloadId) -> Option<io::Error> {

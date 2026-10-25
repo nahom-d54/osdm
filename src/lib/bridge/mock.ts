@@ -1,5 +1,5 @@
 import type { EngineBridge, EngineErrorListener, SnapshotListener } from "@/lib/bridge/types";
-import type { Download, EngineConfig, Segment, UrlProbe } from "@/lib/types";
+import type { Download, DownloadRequest, EngineConfig, Segment, UrlProbe } from "@/lib/types";
 import { suggestFilename } from "@/lib/format";
 
 export class BridgeError extends Error {}
@@ -190,7 +190,10 @@ export class MockBridge implements EngineBridge {
 
   // --- lifecycle commands ---
 
-  async enqueue(request: { url: string; destination: string }): Promise<string> {
+  async enqueue(request: DownloadRequest): Promise<string> {
+    if (request.expected_sha256 && !/^[a-f0-9]{64}$/i.test(request.expected_sha256.trim())) {
+      throw new BridgeError("SHA-256 must contain exactly 64 hexadecimal characters.");
+    }
     if (this.entries.some((e) => e.download.destination === request.destination)) {
       throw new BridgeError("A file already exists at this destination. The engine never overwrites.");
     }
@@ -207,6 +210,8 @@ export class MockBridge implements EngineBridge {
         error: null,
         bytes_per_second: 0,
         eta_seconds: null,
+        expected_sha256: request.expected_sha256?.trim().toLowerCase() || null,
+        integrity: "Unverified",
         validator: null,
         ranged: true,
       },
@@ -294,6 +299,25 @@ export class MockBridge implements EngineBridge {
       entry.download.state = "Canceling";
       entry.ticksInPhase = 0;
     }
+    this.markDirty();
+  }
+
+  async updateUrl(id: string, raw: string): Promise<void> {
+    const url = new URL(raw.trim());
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
+      throw new BridgeError("Use an HTTP(S) URL without embedded credentials.");
+    }
+    const entry = this.find(id);
+    if (!["Paused", "Failed"].includes(entry.download.state)) {
+      throw new BridgeError("Pause the download before changing its URL.");
+    }
+    entry.download.url = url.toString();
+    entry.download.state = "Paused";
+    entry.download.error = null;
+    entry.download.ready_to_publish = false;
+    entry.download.sha256 = null;
+    entry.download.integrity = "Unverified";
+    entry.phase = "run";
     this.markDirty();
   }
 

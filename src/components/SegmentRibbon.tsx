@@ -118,7 +118,7 @@ export function SegmentRibbon({ download }: { download: Download }) {
 }
 
 /**
- * The same field at inspection scale: one lane per connection, with the
+ * The same field at inspection scale: one lane per durable segment, with the
  * durable/live boundary readable lane by lane.
  */
 export function SegmentLanes({ download }: { download: Download }) {
@@ -204,7 +204,7 @@ export function SegmentLanes({ download }: { download: Download }) {
         <Legend className={tone.live} label="In flight" />
         <Legend className="bg-line-soft" label="Remaining" />
         <span className="ml-auto normal-case tracking-normal">
-          {download.segments.length} {download.segments.length === 1 ? "lane" : "lanes"} ·{" "}
+          {download.segments.length} {download.segments.length === 1 ? "segment" : "segments"} ·{" "}
           {formatBytes(total)} total
         </span>
       </div>

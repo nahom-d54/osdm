@@ -183,6 +183,16 @@ download_command!(engine_retry, retry);
 download_command!(engine_cancel, cancel);
 
 #[tauri::command]
+async fn engine_update_url(shell: State<'_, Shell>, id: DownloadId, url: String) -> Reply<()> {
+    shell
+        .engine()
+        .await?
+        .update_url(id, &url)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn engine_reorder(shell: State<'_, Shell>, ids: Vec<DownloadId>) -> Reply<()> {
     shell
         .engine()
@@ -370,6 +380,7 @@ pub fn run() {
             engine_pause,
             engine_resume,
             engine_retry,
+            engine_update_url,
             engine_cancel,
             engine_reorder,
             engine_set_speed_limit,

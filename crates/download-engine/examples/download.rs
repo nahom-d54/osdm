@@ -26,7 +26,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         engine.resume(download.id).await?;
         download.id
     } else {
-        engine.enqueue(DownloadRequest { url, destination }).await?
+        engine
+            .enqueue(DownloadRequest {
+                url,
+                destination,
+                expected_sha256: None,
+            })
+            .await?
     };
     let interrupted = tokio::signal::ctrl_c();
     tokio::pin!(interrupted);

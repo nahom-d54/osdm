@@ -1,4 +1,4 @@
-use crate::{engine::Inner, *};
+use crate::{engine::Inner, retry::RetryHint, *};
 use futures_util::StreamExt;
 use reqwest::{Response, header};
 use std::{
@@ -21,32 +21,46 @@ pub(crate) struct Probe {
     pub(crate) content_type: Option<String>,
 }
 
+fn host(url: &str) -> Result<String> {
+    let url = reqwest::Url::parse(url).map_err(|_| Error::Invalid("invalid URL".into()))?;
+    url.host_str()
+        .map(str::to_owned)
+        .ok_or_else(|| Error::Invalid("missing host".into()))
+}
+
 async fn permits(
     inner: &Inner,
     url: &str,
     token: &CancellationToken,
-) -> Result<(OwnedSemaphorePermit, OwnedSemaphorePermit)> {
-    let url = reqwest::Url::parse(url).map_err(|_| Error::Invalid("invalid URL".into()))?;
-    let host = url
-        .host_str()
-        .ok_or_else(|| Error::Invalid("missing host".into()))?
-        .to_owned();
-    let host_limit = inner
-        .hosts
-        .lock()
-        .await
-        .entry(host)
-        .or_insert_with(|| {
-            Arc::new(tokio::sync::Semaphore::new(
-                inner.config.max_connections_per_host,
-            ))
-        })
-        .clone();
+    id: Option<DownloadId>,
+    yieldable: bool,
+) -> Result<(crate::adaptive::Lease, OwnedSemaphorePermit)> {
+    let hostname = host(url)?;
+    // Requests to a host that recently answered 429/503 wait out the shared
+    // cooldown before competing for a connection permit.
+    inner.cooldowns.wait(&hostname, token).await?;
+    let host_limit = inner.host(url).await?;
+    if let Some(id) = id {
+        inner
+            .download_hosts
+            .lock()
+            .await
+            .insert(id, host_limit.clone());
+    }
     tokio::select! {
         _ = token.cancelled() => Err(Error::Interrupted),
         permits = async {
-            let host = host_limit.acquire_owned().await.map_err(|_| Error::Shutdown)?;
-            let global = inner.connections.clone().acquire_owned().await.map_err(|_| Error::Shutdown)?;
+            let host = host_limit.acquire(id, yieldable, token).await?;
+            let retire = host.retire.clone();
+            let global = tokio::select! {
+                _ = retire.cancelled() => Err(Error::Rebalance),
+                result = async {
+                    let global = inner.connections.clone().acquire_owned().await.map_err(|_| Error::Shutdown)?;
+                    inner.cooldowns.wait(&hostname, token).await?;
+                    Ok(global)
+                } => result,
+            }?;
+            host.started();
             Ok((host, global))
         } => permits,
     }
@@ -80,17 +94,60 @@ fn validator(response: &Response) -> Option<String> {
         })
 }
 
+/// Interactive metadata probes have a bounded retry budget. Download probes
+/// use the same request path but keep waiting through rate limiting.
 pub(crate) async fn probe(inner: &Inner, url: &str, token: &CancellationToken) -> Result<Probe> {
-    let _permits = permits(inner, url, token).await?;
+    probe_with_policy(inner, url, token, None).await
+}
+
+async fn probe_with_policy(
+    inner: &Inner,
+    url: &str,
+    token: &CancellationToken,
+    id: Option<DownloadId>,
+) -> Result<Probe> {
+    let mut attempt: u32 = 0;
+    let mut failures = 0;
+    loop {
+        let mut hint = RetryHint::default();
+        match probe_once(inner, url, token, &mut hint).await {
+            Ok(value) => return Ok(value),
+            Err(error)
+                if retryable(&error)
+                    && ((id.is_some() && hint.rate_limited)
+                        || failures < inner.config.max_retries) =>
+            {
+                if !hint.rate_limited || id.is_none() {
+                    failures += 1;
+                }
+                wait_before_retry(inner, url, attempt, hint, token, id).await?;
+                attempt = attempt.saturating_add(1);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+async fn probe_once(
+    inner: &Inner,
+    url: &str,
+    token: &CancellationToken,
+    hint: &mut RetryHint,
+) -> Result<Probe> {
+    let _permits = permits(inner, url, token, None, false).await?;
     let response = tokio::select! {
         _ = token.cancelled() => return Err(Error::Interrupted),
         response = inner.client.get(url).header(header::ACCEPT_ENCODING, "identity").header(header::RANGE, "bytes=0-0").send() => response?,
     };
+    let status = response.status().as_u16();
+    if matches!(status, 429 | 503) {
+        *hint = retry_hint(&response);
+    }
     let url = response.url().to_string();
     let validator = validator(&response);
     let filename = content_disposition_filename(&response);
     let content_type = response_content_type(&response);
-    if response.status().as_u16() == 206 {
+    if status == 206 {
         let (start, end, total) = content_range(&response).ok_or(Error::Range)?;
         if start != 0 || end != 0 || total == 0 {
             return Err(Error::Range);
@@ -120,7 +177,7 @@ pub(crate) async fn probe(inner: &Inner, url: &str, token: &CancellationToken) -
             filename,
             content_type,
         })
-    } else if response.status().as_u16() == 200 {
+    } else if status == 200 {
         Ok(Probe {
             url,
             length: response.content_length(),
@@ -129,7 +186,7 @@ pub(crate) async fn probe(inner: &Inner, url: &str, token: &CancellationToken) -
             filename,
             content_type,
         })
-    } else if response.status().as_u16() == 416
+    } else if status == 416
         && response
             .headers()
             .get(header::CONTENT_RANGE)
@@ -144,7 +201,20 @@ pub(crate) async fn probe(inner: &Inner, url: &str, token: &CancellationToken) -
             content_type,
         })
     } else {
-        Err(Error::Http(response.status().as_u16()))
+        Err(Error::Http(status))
+    }
+}
+
+/// Read the server's rate-limit signal from a 429/503 response. Both the delay
+/// and the fact that the host asked us to slow down are needed by callers.
+fn retry_hint(response: &Response) -> RetryHint {
+    RetryHint {
+        after: response
+            .headers()
+            .get(header::RETRY_AFTER)
+            .and_then(|value| value.to_str().ok())
+            .and_then(crate::retry::parse_retry_after),
+        rate_limited: true,
     }
 }
 
@@ -300,27 +370,30 @@ pub(crate) async fn download(
     id: DownloadId,
     token: CancellationToken,
 ) -> Result<()> {
-    let original = {
+    let mut original = {
         let data = inner.data.lock().await;
         data.downloads.iter().find(|d| d.id == id).unwrap().clone()
     };
+    if original.ready_to_publish
+        && original.integrity == IntegrityStatus::Mismatch
+        && !tokio::fs::try_exists(&original.destination).await?
+    {
+        // A failed verification during publication recovery must permit a fresh
+        // transfer, but never truncate a temporary inode already published.
+        let mut data = inner.data.lock().await;
+        data.downloads
+            .iter_mut()
+            .find(|d| d.id == id)
+            .unwrap()
+            .ready_to_publish = false;
+        inner.save(&data, id).await?;
+        original.ready_to_publish = false;
+    }
     if original.ready_to_publish {
+        crate::integrity::verify(&inner, id, &token).await?;
         return publish(&inner, id, &token).await;
     }
-    let mut inspected = None;
-    for attempt in 0..=inner.config.max_retries {
-        match probe(&inner, &original.url, &token).await {
-            Ok(value) => {
-                inspected = Some(value);
-                break;
-            }
-            Err(error) if retryable(&error) && attempt < inner.config.max_retries => {
-                backoff(attempt, None, &token).await?;
-            }
-            Err(error) => return Err(error),
-        }
-    }
-    let probe = inspected.unwrap();
+    let probe = probe_with_policy(&inner, &original.url, &token, Some(id)).await?;
     prepare(&inner, id, &probe, false).await?;
     let result = segments(inner.clone(), id, &probe.url, &token).await;
     if matches!(result, Err(Error::Range)) && !token.is_cancelled() {
@@ -331,6 +404,7 @@ pub(crate) async fn download(
     } else {
         result?;
     }
+    crate::integrity::verify(&inner, id, &token).await?;
     publish(&inner, id, &token).await
 }
 
@@ -343,6 +417,7 @@ async fn prepare(inner: &Inner, id: DownloadId, probe: &Probe, force_stream: boo
         Err(error) => return Err(error.into()),
     };
     let can_resume = !force_stream
+        && download.integrity != IntegrityStatus::Mismatch
         && probe.ranged
         && download.ranged
         && probe.validator.is_some()
@@ -415,6 +490,8 @@ async fn prepare(inner: &Inner, id: DownloadId, probe: &Probe, force_stream: boo
             .collect();
     }
     let download = data.downloads.iter_mut().find(|d| d.id == id).unwrap();
+    download.sha256 = None;
+    download.integrity = IntegrityStatus::Unverified;
     for segment in &mut download.segments {
         segment.downloaded = segment.committed;
     }
@@ -439,11 +516,17 @@ async fn segments(
         .len();
     let children = token.child_token();
     let mut tasks = JoinSet::new();
+    // Persisted segment layouts may have been created with a higher ceiling.
+    // Admission, not the number of saved segments, enforces today's setting.
+    let lanes = Arc::new(tokio::sync::Semaphore::new(
+        inner.config.connections_per_download,
+    ));
     for index in 0..count {
         let inner = inner.clone();
         let token = children.clone();
         let url = url.to_owned();
-        tasks.spawn(async move { segment(inner, id, index, &url, &token).await });
+        let lanes = lanes.clone();
+        tasks.spawn(async move { segment(inner, id, index, &url, &token, lanes).await });
     }
     let mut failure = None;
     while let Some(result) = tasks.join_next().await {
@@ -468,18 +551,69 @@ async fn segment(
     index: usize,
     url: &str,
     token: &CancellationToken,
+    lanes: Arc<tokio::sync::Semaphore>,
 ) -> Result<()> {
-    for attempt in 0..=inner.config.max_retries {
-        let mut retry_after = None;
-        match attempt_segment(&inner, id, index, url, token, &mut retry_after).await {
-            Ok(()) => return Ok(()),
-            Err(error) if retryable(&error) && attempt < inner.config.max_retries => {
-                backoff(attempt, retry_after, token).await?;
+    let mut attempt: u32 = 0;
+    let mut failures = 0;
+    loop {
+        let mut hint = RetryHint::default();
+        let permit = tokio::select! {
+            _ = token.cancelled() => return Err(Error::Interrupted),
+            permit = lanes.acquire() => permit.map_err(|_| Error::Shutdown)?,
+        };
+        let before = inner
+            .data
+            .lock()
+            .await
+            .downloads
+            .iter()
+            .find(|d| d.id == id)
+            .unwrap()
+            .segments[index]
+            .committed;
+        let result = attempt_segment(&inner, id, index, url, token, &mut hint).await;
+        drop(permit);
+        if result.as_ref().is_err_and(retryable) {
+            let committed = inner
+                .data
+                .lock()
+                .await
+                .downloads
+                .iter()
+                .find(|d| d.id == id)
+                .unwrap()
+                .segments[index]
+                .committed;
+            if committed > before {
+                // Flaky connections that still save bytes are recovering.
+                failures = 0;
+                attempt = 0;
+            }
+        }
+        match result {
+            Ok(true) => return Ok(()),
+            Ok(false) => {
+                // A successful subrequest resets consecutive failure accounting.
+                failures = 0;
+                attempt = 0;
+                tokio::task::yield_now().await;
+            }
+            Err(Error::Rebalance) => {
+                tokio::task::yield_now().await;
+            }
+            Err(error)
+                if retryable(&error)
+                    && (hint.rate_limited || failures < inner.config.max_retries) =>
+            {
+                if !hint.rate_limited {
+                    failures += 1;
+                }
+                wait_before_retry(&inner, url, attempt, hint, token, Some(id)).await?;
+                attempt = attempt.saturating_add(1);
             }
             Err(error) => return Err(error),
         }
     }
-    unreachable!()
 }
 
 fn retryable(error: &Error) -> bool {
@@ -489,12 +623,55 @@ fn retryable(error: &Error) -> bool {
     )
 }
 
-async fn backoff(attempt: u32, retry_after: Option<u64>, token: &CancellationToken) -> Result<()> {
-    let delay = retry_after.unwrap_or(1 << attempt.min(5)).min(120);
-    tokio::select! {
-        _ = token.cancelled() => Err(Error::Interrupted),
-        _ = tokio::time::sleep(Duration::from_secs(delay)) => Ok(()),
+/// Wait out the retry delay. When the server rate limited us, the whole host is
+/// paused for the same window so parallel workers and other downloads stop
+/// adding load instead of each retrying on its own schedule.
+async fn wait_before_retry(
+    inner: &Inner,
+    url: &str,
+    attempt: u32,
+    hint: RetryHint,
+    token: &CancellationToken,
+    id: Option<DownloadId>,
+) -> Result<()> {
+    let controller = inner.host(url).await?;
+    controller.congested(hint.rate_limited);
+    if let Some(id) = id {
+        inner
+            .download_hosts
+            .lock()
+            .await
+            .insert(id, controller.clone());
     }
+    let delay = crate::retry::delay(attempt, hint.after).max(controller.retry_floor());
+    if hint.rate_limited {
+        inner.cooldowns.defer(&host(url)?, delay).await;
+    }
+    let message = format!(
+        "{} Retrying automatically after {} seconds.",
+        if hint.rate_limited {
+            "The server asked us to slow down."
+        } else {
+            "Connection interrupted."
+        },
+        delay.as_secs().max(1)
+    );
+    if let Some(id) = id {
+        let mut data = inner.data.lock().await;
+        if let Some(download) = data.downloads.iter_mut().find(|d| d.id == id) {
+            download.error = Some(message.clone());
+        }
+    }
+    let result = crate::retry::sleep(delay, token).await;
+    if let Some(id) = id {
+        let mut data = inner.data.lock().await;
+        if let Some(download) = data.downloads.iter_mut().find(|d| d.id == id)
+            && download.error.as_deref() == Some(message.as_str())
+        {
+            download.error = None;
+        }
+    }
+    result
 }
 
 async fn attempt_segment(
@@ -503,8 +680,8 @@ async fn attempt_segment(
     index: usize,
     url: &str,
     token: &CancellationToken,
-    retry_after: &mut Option<u64>,
-) -> Result<()> {
+    hint: &mut RetryHint,
+) -> Result<bool> {
     if token.is_cancelled() {
         return Err(Error::Interrupted);
     }
@@ -520,10 +697,20 @@ async fn attempt_segment(
     };
     let segment = &download.segments[index];
     if segment.end == Some(segment.start + segment.committed) {
-        return Ok(());
+        return Ok(true);
     }
-    let _permits = permits(inner, url, token).await?;
+    let (lease, _global) = permits(inner, url, token, Some(id), download.ranged).await?;
     let offset = segment.start + segment.committed;
+    let request_end = if download.ranged {
+        Some(
+            segment
+                .end
+                .unwrap()
+                .min(offset.saturating_add(inner.host(url).await?.chunk_size())),
+        )
+    } else {
+        segment.end
+    };
     let mut request = inner
         .client
         .get(url)
@@ -531,23 +718,22 @@ async fn attempt_segment(
     if download.ranged {
         request = request.header(
             header::RANGE,
-            format!("bytes={offset}-{}", segment.end.unwrap() - 1),
+            format!("bytes={offset}-{}", request_end.unwrap() - 1),
         );
         if let Some(validator) = &download.validator {
             request = request.header(header::IF_RANGE, validator);
         }
     }
+    let started = tokio::time::Instant::now();
     let response = tokio::select! {
         _ = token.cancelled() => return Err(Error::Interrupted),
+        _ = lease.retire.cancelled(), if download.ranged => return Err(Error::Rebalance),
         response = request.send() => response?,
     };
+    lease.response(started.elapsed());
     let status = response.status().as_u16();
     if status == 429 || status == 503 {
-        *retry_after = response
-            .headers()
-            .get(header::RETRY_AFTER)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.parse().ok());
+        *hint = retry_hint(&response);
     }
     if status >= 400 {
         return Err(Error::Http(status));
@@ -566,7 +752,7 @@ async fn attempt_segment(
             || content_range(&response)
                 != Some((
                     offset,
-                    segment.end.unwrap() - 1,
+                    request_end.unwrap() - 1,
                     download.total_bytes.unwrap(),
                 ))
         {
@@ -595,6 +781,7 @@ async fn attempt_segment(
     loop {
         let chunk = tokio::select! {
             _ = token.cancelled() => { failure = Some(Error::Interrupted); break; },
+            _ = lease.retire.cancelled(), if download.ranged => { failure = Some(Error::Rebalance); break; },
             chunk = stream.next() => chunk,
         };
         let Some(chunk) = chunk else { break };
@@ -605,15 +792,17 @@ async fn attempt_segment(
                 break;
             }
         };
-        if segment
-            .end
-            .is_some_and(|end| segment.start + received + chunk.len() as u64 > end)
-        {
+        if request_end.is_some_and(|end| segment.start + received + chunk.len() as u64 > end) {
             failure = Some(Error::Length);
             break;
         }
+        lease.received(chunk.len() as u64);
         for bytes in chunk.chunks(64 * 1024) {
-            if let Err(error) = throttle(inner, bytes.len() as u64, token).await {
+            let throttled = tokio::select! {
+                _ = lease.retire.cancelled(), if download.ranged => Err(Error::Rebalance),
+                result = throttle(inner, bytes.len() as u64, token) => result,
+            };
+            if let Err(error) = throttled {
                 failure = Some(error);
                 break;
             }
@@ -639,13 +828,12 @@ async fn attempt_segment(
     if let Some(error) = failure {
         return Err(error);
     }
-    if segment
-        .end
-        .is_some_and(|end| segment.start + received != end)
-    {
+    if request_end.is_some_and(|end| segment.start + received != end) {
         return Err(Error::Length);
     }
-    Ok(())
+    Ok(segment
+        .end
+        .is_none_or(|end| segment.start + received == end))
 }
 
 async fn checkpoint(

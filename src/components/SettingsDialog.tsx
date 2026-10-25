@@ -124,7 +124,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
                 className="font-mono tnum"
               />
             </Field>
-            <Field label="Retries" htmlFor="settings-retries" hint="Per transfer step. Applies after a restart.">
+            <Field label="Retries" htmlFor="settings-retries" hint="Per transfer step; HTTP 429/503 keeps retrying automatically. Applies after a restart.">
               <NumberInput
                 id="settings-retries"
                 value={settings.max_retries}
@@ -151,7 +151,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
                 className="font-mono tnum"
               />
             </Field>
-            <Field label="Per file" htmlFor="settings-per-download" hint="Connections each.">
+            <Field label="Per file" htmlFor="settings-per-download" hint="Maximum connections; adapts automatically.">
               <NumberInput
                 id="settings-per-download"
                 value={settings.connections_per_download}
