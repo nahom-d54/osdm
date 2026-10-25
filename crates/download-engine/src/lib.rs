@@ -1,6 +1,6 @@
 #![doc = include_str!("../README.md")]
-mod engine;
 mod cleanup;
+mod engine;
 mod model;
 mod store;
 #[cfg(debug_assertions)]

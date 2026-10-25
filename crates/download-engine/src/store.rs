@@ -21,16 +21,20 @@ impl Store {
         let version: i64 = sqlx::query_scalar("PRAGMA user_version")
             .fetch_one(&pool)
             .await?;
-        if version > 1 {
+        if !(0..=2).contains(&version) {
             return Err(crate::Error::Invalid(
                 "database was created by a newer engine version".into(),
             ));
         }
+        let mut tx = pool.begin().await?;
         sqlx::query("CREATE TABLE IF NOT EXISTS downloads (id TEXT PRIMARY KEY, position INTEGER NOT NULL, payload TEXT NOT NULL)")
-            .execute(&pool).await?;
-        sqlx::query("PRAGMA user_version = 1")
-            .execute(&pool)
+            .execute(&mut *tx).await?;
+        sqlx::query("CREATE TABLE IF NOT EXISTS orphaned_partials (id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
+            .execute(&mut *tx).await?;
+        sqlx::query("PRAGMA user_version = 2")
+            .execute(&mut *tx)
             .await?;
+        tx.commit().await?;
         Ok(Self(pool))
     }
 
@@ -60,6 +64,52 @@ impl Store {
                 .await?;
         }
         tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn remove(&self, download: &Download, retain_partial: bool) -> Result<()> {
+        let mut tx = self.0.begin().await?;
+        if retain_partial {
+            sqlx::query("INSERT INTO orphaned_partials(id, payload) VALUES (?, ?)")
+                .bind(download.id.to_string())
+                .bind(serde_json::to_string(&crate::cleanup::OwnedPartial::from(
+                    download,
+                ))?)
+                .execute(&mut *tx)
+                .await?;
+        }
+        sqlx::query("DELETE FROM downloads WHERE id=?")
+            .bind(download.id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        let rows = sqlx::query("SELECT id FROM downloads ORDER BY position")
+            .fetch_all(&mut *tx)
+            .await?;
+        for (position, row) in rows.iter().enumerate() {
+            sqlx::query("UPDATE downloads SET position=? WHERE id=?")
+                .bind(position as i64)
+                .bind(row.try_get::<String, _>("id")?)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn orphans(&self) -> Result<Vec<crate::cleanup::OwnedPartial>> {
+        let rows = sqlx::query("SELECT payload FROM orphaned_partials")
+            .fetch_all(&self.0)
+            .await?;
+        rows.iter()
+            .map(|row| Ok(serde_json::from_str(row.try_get("payload")?)?))
+            .collect()
+    }
+
+    pub async fn forget_orphan(&self, id: crate::DownloadId) -> Result<()> {
+        sqlx::query("DELETE FROM orphaned_partials WHERE id=?")
+            .bind(id.to_string())
+            .execute(&self.0)
+            .await?;
         Ok(())
     }
 }

@@ -37,12 +37,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - Recovers interrupted downloads as paused. Resume explicitly after reopening.
 - Pause/cancel drain workers before returning. Cancellation keeps partial data.
 - `retry` requeues failed/canceled work and revalidates it before resuming.
+- `probe` reads the final URL, Content-Disposition filename, content type, length, and range support without enqueueing. Path components are stripped from server filenames; the desktop workflow applies filesystem-specific sanitization.
 - `reorder` requires every history/queue ID exactly once.
 - `subscribe` provides full snapshots at up to 4 Hz. Refresh using `snapshot` after subscriber lag.
 - Zero bandwidth limit means unlimited; concurrency settings are fixed for an engine's lifetime.
 - Calls must run inside a Tokio runtime. Call `shutdown` before dropping or reopening the engine.
 - An OS file lock enforces one engine owner per database. Shutdown releases ownership.
 - Destination parent directories must exist. Existing destination files are never overwritten.
+- `remove_download(id, remove_partial_file)` removes fully stopped terminal history. Optional deletion only unlinks the owned temporary name, never a published destination.
+- `cleanup_partial_data()` explicitly removes Failed/Canceled partials and entryless partials in the persisted orphan ledger. It never scans arbitrary folders or deletes unrecorded files.
+- After removal, `reorder` must contain every remaining ID exactly once; remaining ordering is preserved.
 
 ## Storage and resource details
 
@@ -56,13 +60,13 @@ The database contains full source URLs, including signed query strings. Do not p
 
 - Direct URLs only; no browser cookies, custom authentication headers, proxy configuration, or media extraction.
 - No expected-checksum input yet; transfer length checks do not prove authenticity.
-- No deletion/history-removal command or automatic leftover-part cleanup.
+- Partial cleanup is explicit, not automatic. Unrecorded `.part` files are left alone.
 - Process-exit recovery is tested; power-loss directory durability is not guaranteed.
 - Numeric Retry-After is honored on transfer retries, capped at 120 seconds; HTTP-date values and probe Retry-After need follow-up.
 - Changing the bandwidth limit wakes existing throttle waits; low-speed transfers remain cancellable.
 - Fixed segmentation rather than adaptive work stealing; instantaneous speed/ETA may fluctuate.
 - Server validators must be truthful. Last-Modified has weaker identity guarantees than strong ETags.
-- The initial schema is version 1; compatibility migrations are required before changing persisted models.
+- Schema revision 2 adds the orphan-partial ledger. Revision 0/1 migrates transactionally; newer revisions are rejected. Revision-1 applications reject revision 2, so downgrading requires restoring a compatible backup.
 
 ## Testing
 

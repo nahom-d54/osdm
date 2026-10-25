@@ -27,6 +27,20 @@ fn same_destination(left: &Path, right: &Path) -> bool {
     }
 }
 
+fn validated_url(raw: &str) -> Result<reqwest::Url> {
+    let url = reqwest::Url::parse(raw).map_err(|_| Error::Invalid("invalid URL".into()))?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(Error::Invalid(
+            "use an HTTP(S) URL without embedded credentials".into(),
+        ));
+    }
+    Ok(url)
+}
+
 #[derive(Clone)]
 pub struct Engine {
     pub(crate) inner: Arc<Inner>,
@@ -207,18 +221,29 @@ impl Engine {
         self.inner.data.lock().await.downloads.clone()
     }
 
-    pub async fn enqueue(&self, request: DownloadRequest) -> Result<DownloadId> {
-        let url =
-            reqwest::Url::parse(&request.url).map_err(|_| Error::Invalid("invalid URL".into()))?;
-        if !matches!(url.scheme(), "http" | "https")
-            || url.host_str().is_none()
-            || !url.username().is_empty()
-            || url.password().is_some()
+    /// Read response metadata without creating a queue entry. The desktop
+    /// workflow uses this to propose a real server filename before enqueueing.
+    pub async fn probe(&self, url: &str) -> Result<ProbeInfo> {
         {
-            return Err(Error::Invalid(
-                "use an HTTP(S) URL without embedded credentials".into(),
-            ));
+            let data = self.inner.data.lock().await;
+            if data.stopped {
+                return Err(Error::Shutdown);
+            }
         }
+        let url = validated_url(url)?;
+        let token = CancellationToken::new();
+        let probe = transfer::probe(&self.inner, url.as_str(), &token).await?;
+        Ok(ProbeInfo {
+            final_url: probe.url,
+            filename: probe.filename,
+            content_type: probe.content_type,
+            total_bytes: probe.length,
+            ranged: probe.ranged,
+        })
+    }
+
+    pub async fn enqueue(&self, request: DownloadRequest) -> Result<DownloadId> {
+        let url = validated_url(&request.url)?;
         if !request.destination.is_absolute() || request.destination.file_name().is_none() {
             return Err(Error::Invalid(
                 "destination must be an absolute filename".into(),

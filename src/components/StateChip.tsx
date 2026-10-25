@@ -1,40 +1,60 @@
 import type { DownloadState } from "@/lib/types";
+import { cn } from "cn";
 
-const LABELS: Record<DownloadState, string> = {
-  Queued: "Queued",
-  Downloading: "Downloading",
-  Pausing: "Pausing",
-  Paused: "Paused",
-  Canceling: "Stopping",
-  Canceled: "Stopped",
-  Failed: "Failed",
-  Completed: "Completed",
+const META: Record<DownloadState, { label: string; tone: string; dot: string; live?: boolean }> = {
+  Queued: {
+    label: "Queued",
+    tone: "text-muted-foreground",
+    dot: "border border-faint bg-transparent",
+  },
+  Downloading: {
+    label: "Downloading",
+    tone: "text-brand",
+    dot: "bg-brand",
+    live: true,
+  },
+  Pausing: {
+    label: "Pausing",
+    tone: "text-warn",
+    dot: "bg-warn",
+  },
+  Paused: {
+    label: "Paused",
+    tone: "text-warn",
+    dot: "bg-warn",
+  },
+  Canceling: {
+    label: "Stopping",
+    tone: "text-danger",
+    dot: "bg-danger",
+  },
+  Canceled: {
+    label: "Stopped",
+    tone: "text-muted-foreground",
+    dot: "bg-faint",
+  },
+  Failed: {
+    label: "Failed",
+    tone: "text-danger",
+    dot: "bg-danger",
+  },
+  Completed: {
+    label: "Completed",
+    tone: "text-ok",
+    dot: "bg-ok",
+  },
 };
 
-const COLORS: Record<DownloadState, { dot: string; chip: string }> = {
-  Queued: { dot: "bg-faint", chip: "text-muted bg-raise" },
-  Downloading: { dot: "bg-accent", chip: "text-accent bg-accent-soft" },
-  Pausing: { dot: "bg-warn", chip: "text-warn bg-warn-soft" },
-  Paused: { dot: "bg-warn", chip: "text-warn bg-warn-soft" },
-  Canceling: { dot: "bg-danger", chip: "text-danger bg-danger-soft" },
-  Canceled: { dot: "bg-faint", chip: "text-muted bg-raise" },
-  Failed: { dot: "bg-danger", chip: "text-danger bg-danger-soft" },
-  Completed: { dot: "bg-ok", chip: "text-ok bg-ok-soft" },
-};
-
-/** State chip with a text label — never color alone (PLAN 5.4). */
+/** State is always written out; colour is a second, never the only, cue. */
 export function StateChip({ state }: { state: DownloadState }) {
-  const colors = COLORS[state];
-  const live = state === "Downloading";
+  const meta = META[state];
   return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${colors.chip}`}
-    >
+    <span className={cn("inline-flex items-center gap-1.5 whitespace-nowrap text-[11px] font-medium", meta.tone)}>
       <span
-        className={`h-1.5 w-1.5 rounded-full ${colors.dot} ${live ? "animate-pulse" : ""}`}
         aria-hidden="true"
+        className={cn("size-1.5 shrink-0 rounded-full", meta.dot, meta.live && "breathe")}
       />
-      {LABELS[state]}
+      {meta.label}
     </span>
   );
 }

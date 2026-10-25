@@ -46,11 +46,27 @@ impl Config {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DownloadRequest {
     pub url: String,
     /// Absolute destination filename; existing files are never overwritten.
     pub destination: PathBuf,
+}
+
+/// Metadata read from a URL before it is enqueued. No queue entry is created.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProbeInfo {
+    /// URL after redirects.
+    pub final_url: String,
+    /// Filename supplied by Content-Disposition, with path components removed.
+    /// The desktop workflow still sanitizes this for the target filesystem.
+    pub filename: Option<String>,
+    /// MIME type before any `; charset=...` parameter.
+    pub content_type: Option<String>,
+    /// Total resource length when the server reports one.
+    pub total_bytes: Option<u64>,
+    /// True when the server honored a one-byte range request.
+    pub ranged: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

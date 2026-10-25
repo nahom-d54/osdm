@@ -131,10 +131,13 @@ crates/download-engine/
     lib.rs                   # Public exports and errors
     model.rs                 # Configuration, state, segments, events
     engine.rs                # Public commands, scheduler, worker lifecycle
+    cleanup.rs               # History removal and owned-partial cleanup
     transfer.rs              # Probing, transfer, checkpoints, publication
     store.rs                 # SQLite persistence
   tests/downloads.rs         # Local HTTP integration tests
+  tests/history.rs           # Removal, cleanup, and publication recovery tests
   examples/download.rs       # Headless manual exercise
+src-tauri/                   # Tauri 2 shell and IPC bridge
 ```
 
 Planned additions, created only when their priority begins:
@@ -706,13 +709,22 @@ Each decision belongs in a short design note, not in code discovered by accident
 
 ## 11. Current status and next steps
 
-The repository currently contains the headless engine and its tests, covering the P0 transfer foundation. The desktop shell and P1–P4 features are planned but not implemented.
+The repository contains the headless engine, its P0 hardening tests, and a Tauri 2
+desktop shell wired to the existing React UI through the bridge contract in
+`docs/bridge-contract.md`. The shell owns engine lifecycle, tray behavior,
+native dialogs, completion notifications, persistent settings, and
+configuration-gated signed updates. Category routing and the installer/upgrade
+validation remain P1 release work; P1–P4 features beyond the shell are not
+implemented.
 
 Immediate work:
 
-1. Harden P0 on Windows: storage faults, long downloads, cancellation during publication, and migration tests.
-2. Finish the engine interface and bridge contracts before starting the desktop shell.
-3. Build the P1 desktop shell and exercise every lifecycle command from the UI.
-4. Complete the P1 release gate: installer, upgrades, categories, and update safety.
-5. Move to P2 browser capture and batch/CLI once the desktop workflows are stable.
-6. Keep P3 and P4 as prioritized backlog items; do not schedule them until their dependencies are met.
+1. Validate the native shell on supported Windows installations: dialogs,
+   Explorer/open handlers, close-to-tray, coordinated Quit, single-instance
+   focus, notification permissions, and NSIS install/upgrade/uninstall.
+2. Publish a signed update channel and exercise live update delivery, downgrade
+   refusal, and queue preservation across an upgrade.
+3. Complete the P1 release gate: category routing, accessibility validation,
+   and preservation of settings/queue/history across updates.
+4. Move to P2 browser capture and batch/CLI once the desktop workflows are stable.
+5. Keep P3 and P4 as prioritized backlog items; do not schedule them until their dependencies are met.

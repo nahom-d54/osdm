@@ -1,4 +1,4 @@
-import type { Download } from "@/lib/types";
+import type { Download, UrlProbe } from "@/lib/types";
 
 export interface SnapshotListener {
   (downloads: Download[]): void;
@@ -22,6 +22,8 @@ export interface EngineBridge {
 
   // --- Engine commands (mirrored 1:1) ---
   enqueue(request: import("@/lib/types").DownloadRequest): Promise<string>;
+  /** Read final URL, server filename, length, and range support without enqueueing. */
+  probe(url: string): Promise<UrlProbe>;
   pause(id: string): Promise<void>;
   resume(id: string): Promise<void>;
   retry(id: string): Promise<void>;
@@ -35,14 +37,16 @@ export interface EngineBridge {
   subscribe(listener: SnapshotListener): () => void;
   onError(listener: EngineErrorListener): () => void;
 
-  // --- P1 engine additions (pending on the Rust side, see docs) ---
+  // --- P1 engine additions ---
   /** Delete a download entry; optionally remove its temporary data. */
   removeDownload(id: string, removePartialFile: boolean): Promise<void>;
-  /** Remove leftover temporary files that no download owns. */
+  /** Remove Failed/Canceled partials and entryless partials in the engine ownership ledger. */
   cleanupPartialData(): Promise<number>;
 
-  // --- Desktop workflows (Tauri side assumed available) ---
+  // --- Native desktop workflows ---
   pickDirectory(title: string, defaultPath?: string): Promise<string | null>;
+  /** Existing per-user download folder used when no folder has been chosen yet. */
+  defaultDownloadDirectory(): Promise<string>;
   suggestFilename(url: string): Promise<string>;
   pathExists(path: string): Promise<boolean>;
   openPath(path: string): Promise<void>;

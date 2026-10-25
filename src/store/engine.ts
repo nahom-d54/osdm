@@ -54,6 +54,7 @@ function configFrom(settings: AppSettings): EngineConfig {
 
 export const useEngine = create<EngineStore>((set, get) => {
   let bridge: EngineBridge | null = null;
+  let initializing: Promise<void> | null = null;
 
   const runCommand = async (action: (b: EngineBridge) => Promise<unknown>): Promise<void> => {
     const b = getBridge();
@@ -78,20 +79,29 @@ export const useEngine = create<EngineStore>((set, get) => {
 
     async init() {
       if (bridge) return; // StrictMode double-mounts effects; init once.
-      const b = getBridge();
-      const settings = useSettings.getState().settings;
-      await b.open(configFrom(settings));
-      b.onError((message) => set({ engineError: message }));
-      b.subscribe((downloads) => set({ downloads }));
-      bridge = b;
-      set({
-        ready: true,
-        downloads: await b.snapshot(),
-      });
+      if (!initializing) {
+        initializing = (async () => {
+          const b = getBridge();
+          const settings = useSettings.getState().settings;
+          await b.open(configFrom(settings));
+          const downloads = await b.snapshot();
+          b.onError((message) => set({ engineError: message }));
+          b.subscribe((downloads) => set({ downloads }));
+          bridge = b;
+          set({ ready: true, downloads, engineError: null });
+        })().catch((error: unknown) => {
+          set({ engineError: error instanceof Error ? error.message : String(error) });
+        }).finally(() => { initializing = null; });
+      }
+      await initializing;
     },
 
     async enqueue(url, destination) {
-      await runCommand((b) => b.enqueue({ url, destination }));
+      // Let the add flow show engine rejections in its own surface instead of
+      // closing optimistically and only raising a background banner.
+      const b = getBridge();
+      await b.enqueue({ url, destination });
+      set({ downloads: await b.snapshot() });
     },
 
     pause: (id) => runCommand((b) => b.pause(id)),

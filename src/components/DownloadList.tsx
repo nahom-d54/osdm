@@ -1,46 +1,22 @@
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useMemo, useRef } from "react";
 import type { KeyboardEvent } from "react";
-import { useEngine } from "@/store/engine";
-import { matchesView } from "@/components/Sidebar";
+import { Layers, Plus, X } from "lucide-react";
+
 import { DownloadRow } from "@/components/DownloadRow";
 import { EmptyState } from "@/components/EmptyState";
-const EMPTY_COPY: Record<string, { title: string; body: string }> = {
-  all: {
-    title: "No downloads yet",
-    body: "Press N or use Add download to paste a direct URL. The engine never overwrites an existing file.",
-  },
-  active: {
-    title: "Nothing is running",
-    body: "Queued and downloading items appear here as they work.",
-  },
-  queued: {
-    title: "The queue is empty",
-    body: "Downloads wait here when all connection slots are busy or were added with pause-for-now.",
-  },
-  completed: {
-    title: "Nothing has finished",
-    body: "Completed files stay here so you can open or locate them later.",
-  },
-  failed: {
-    title: "Nothing failed",
-    body: "Failed downloads keep their safe progress. Retry when the server is reachable again.",
-  },
-  history: {
-    title: "History is empty",
-    body: "Completed, failed, and stopped downloads appear here.",
-  },
-};
+import { Button } from "@/components/ui/button";
+import { VIEW_COPY, matchesQuery, matchesView } from "@/lib/views";
+import { useEngine } from "@/store/engine";
 
-export function DownloadList() {
-  const { downloads, view, query, selectedId, setSelected } = useEngine();
+export function DownloadList({ onAdd }: { onAdd: () => void }) {
+  const { downloads, view, query, selectedId, setSelected, setQuery, setView } = useEngine();
   const listRef = useRef<HTMLUListElement>(null);
 
-  const visible = downloads.filter(
-    (d) =>
-      matchesView(view, d) &&
-      (d.url.toLowerCase().includes(query.toLowerCase()) ||
-        d.destination.toLowerCase().includes(query.toLowerCase())),
-  );
+  const visible = useMemo(() => {
+    return downloads.filter(
+      (download) => matchesView(view, download) && matchesQuery(download, query),
+    );
+  }, [downloads, view, query]);
 
   const onKey = (event: KeyboardEvent) => {
     const rows = Array.from(listRef.current?.querySelectorAll<HTMLLIElement>("li[data-row]") ?? []);
@@ -56,39 +32,81 @@ export function DownloadList() {
     if (id) setSelected(id);
   };
 
-  // After a delete, keep a sensible selection and view context.
+  // Keep selection honest when a filter, search, or deletion removes the row.
   useLayoutEffect(() => {
-    if (selectedId && !downloads.some((d) => d.id === selectedId)) {
+    if (!selectedId) return;
+    const selected = downloads.find((download) => download.id === selectedId);
+    if (!selected || !matchesView(view, selected) || !matchesQuery(selected, query)) {
       setSelected(null);
     }
-  }, [downloads, selectedId, setSelected]);
+  }, [downloads, selectedId, view, query, setSelected]);
+
+  const searching = query.trim() !== "";
+
+  if (visible.length === 0) {
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-8">
+        {searching ? (
+          <EmptyState
+            title="No matches"
+            body={`Nothing in ${VIEW_COPY[view].label.toLowerCase()} matches “${query.trim()}”. Try a filename, domain, or full URL.`}
+            action={
+              <Button variant="secondary" onClick={() => setQuery("")}>
+                <X />
+                Clear search
+              </Button>
+            }
+          />
+        ) : (
+          <EmptyState
+            title={VIEW_COPY[view].emptyTitle}
+            body={VIEW_COPY[view].emptyBody}
+            action={
+              view === "completed" || view === "failed" || view === "history" ? (
+                <Button variant="secondary" onClick={() => setView("all")}>
+                  <Layers />
+                  View all downloads
+                </Button>
+              ) : (
+                <Button onClick={onAdd}>
+                  <Plus />
+                  Add download
+                </Button>
+              )
+            }
+          />
+        )}
+      </div>
+    );
+  }
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col bg-bg">
-      {visible.length === 0 ? (
-        <div className="flex flex-1 items-center justify-center p-8">
-          <EmptyState
-            title={EMPTY_COPY[view]?.title ?? "Nothing here"}
-            body={EMPTY_COPY[view]?.body ?? "Change the filter to see other downloads."}
+    <div className="@container flex min-h-0 min-w-0 flex-1 flex-col bg-background">
+      <div aria-hidden="true" className="flex shrink-0 items-center gap-3 border-b border-line-soft px-4 py-2">
+        <span className="w-9 shrink-0" />
+        <span className="eyebrow flex-1">File</span>
+        <span className="eyebrow w-[92px] shrink-0">State</span>
+        <span className="eyebrow hidden w-[76px] shrink-0 text-right @min-[760px]:block">Rate</span>
+        <span className="eyebrow hidden w-[62px] shrink-0 text-right @min-[920px]:block">Left</span>
+        <span className="eyebrow w-[70px] shrink-0 text-right">Size</span>
+        <span className="w-[56px] shrink-0" />
+      </div>
+
+      <ul
+        ref={listRef}
+        onKeyDown={onKey}
+        aria-label="Downloads"
+        className="min-h-0 min-w-0 flex-1 overflow-y-auto"
+      >
+        {visible.map((download, index) => (
+          <DownloadRow
+            key={download.id}
+            download={download}
+            index={index}
+            selected={download.id === selectedId}
           />
-        </div>
-      ) : (
-        <ul
-          ref={listRef}
-          onKeyDown={onKey}
-          aria-label="Downloads"
-          className="flex flex-col divide-y divide-line-soft overflow-y-auto px-2 py-1.5"
-        >
-          {visible.map((download, index) => (
-            <DownloadRow
-              key={download.id}
-              download={download}
-              index={index}
-              selected={download.id === selectedId}
-            />
-          ))}
-        </ul>
-      )}
+        ))}
+      </ul>
     </div>
   );
 }

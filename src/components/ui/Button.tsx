@@ -1,55 +1,57 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
-import { forwardRef } from "react";
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
+import { cva, type VariantProps } from "class-variance-authority";
+import { cn } from "cn";
 
-const VARIANTS = {
-  primary:
-    "bg-accent text-accent-ink font-medium hover:brightness-110 active:brightness-95",
-  normal:
-    "bg-raise text-ink border border-line hover:border-faint hover:bg-line/40",
-  ghost: "text-muted hover:text-ink hover:bg-raise",
-  danger: "text-danger hover:bg-danger-soft border border-transparent hover:border-danger/40",
-} as const;
+const buttonVariants = cva(
+  "group/button inline-flex shrink-0 select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-transparent text-[12.5px] font-medium transition-colors duration-150 disabled:pointer-events-none disabled:opacity-45 aria-invalid:border-destructive [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5",
+  {
+    variants: {
+      variant: {
+        default:
+          "bg-brand text-brand-ink hover:bg-brand-strong",
+        secondary:
+          "border-line-soft bg-raise text-foreground hover:border-line hover:bg-hover",
+        outline:
+          "border-line bg-transparent text-foreground hover:bg-raise",
+        ghost:
+          "text-muted-foreground hover:bg-raise hover:text-foreground",
+        destructive:
+          "border-danger/25 bg-danger-soft text-danger hover:border-danger/40 hover:bg-danger/15",
+        link: "text-brand underline-offset-4 hover:underline",
+      },
+      size: {
+        xs: "h-6 gap-1 rounded-[5px] px-2 text-[11px]",
+        sm: "h-7 gap-1.5 rounded-md px-2.5 text-[12px]",
+        default: "h-8 px-3",
+        lg: "h-9 px-4",
+        icon: "size-8",
+        "icon-xs": "size-6 rounded-[5px]",
+        "icon-sm": "size-7 rounded-md",
+        "icon-lg": "size-9 rounded-lg",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+      size: "default",
+    },
+  },
+);
 
-const SIZES = {
-  sm: "h-7 px-2.5 text-[12px] gap-1.5",
-  md: "h-8.5 px-3 text-[13px] gap-2",
-} as const;
-
-export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: keyof typeof VARIANTS;
-  size?: keyof typeof SIZES;
-}
-
-export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ variant = "normal", size = "md", className = "", type = "button", ...props }, ref) => (
-    <button
-      ref={ref}
+function Button({
+  className,
+  variant = "default",
+  size = "default",
+  type = "button",
+  ...props
+}: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
+  return (
+    <ButtonPrimitive
+      data-slot="button"
       type={type}
-      className={`inline-flex items-center rounded-[var(--radius-control)] transition-[background-color,border-color,filter] duration-100 disabled:pointer-events-none disabled:opacity-40 ${VARIANTS[variant]} ${SIZES[size]} ${className}`}
+      className={cn(buttonVariants({ variant, size, className }))}
       {...props}
     />
-  ),
-);
-
-export interface IconButtonProps extends ButtonProps {
-  label: string;
-  active?: string;
-  children: ReactNode;
+  );
 }
 
-export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
-  ({ label, className = "", variant = "ghost", size = "sm", children, active, ...props }, ref) => (
-    <Button
-      ref={ref}
-      variant={variant}
-      size={size}
-      aria-label={label}
-      title={label}
-      aria-pressed={active == null ? undefined : active !== ""}
-      className={`w-7 justify-center px-0 ${active ?? ""} ${className}`}
-      {...props}
-    >
-      {children}
-    </Button>
-  ),
-);
+export { Button, buttonVariants };

@@ -12,11 +12,13 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-struct Probe {
-    url: String,
-    length: Option<u64>,
-    ranged: bool,
-    validator: Option<String>,
+pub(crate) struct Probe {
+    pub(crate) url: String,
+    pub(crate) length: Option<u64>,
+    pub(crate) ranged: bool,
+    pub(crate) validator: Option<String>,
+    pub(crate) filename: Option<String>,
+    pub(crate) content_type: Option<String>,
 }
 
 async fn permits(
@@ -78,7 +80,7 @@ fn validator(response: &Response) -> Option<String> {
         })
 }
 
-async fn probe(inner: &Inner, url: &str, token: &CancellationToken) -> Result<Probe> {
+pub(crate) async fn probe(inner: &Inner, url: &str, token: &CancellationToken) -> Result<Probe> {
     let _permits = permits(inner, url, token).await?;
     let response = tokio::select! {
         _ = token.cancelled() => return Err(Error::Interrupted),
@@ -86,6 +88,8 @@ async fn probe(inner: &Inner, url: &str, token: &CancellationToken) -> Result<Pr
     };
     let url = response.url().to_string();
     let validator = validator(&response);
+    let filename = content_disposition_filename(&response);
+    let content_type = response_content_type(&response);
     if response.status().as_u16() == 206 {
         let (start, end, total) = content_range(&response).ok_or(Error::Range)?;
         if start != 0 || end != 0 || total == 0 {
@@ -113,6 +117,8 @@ async fn probe(inner: &Inner, url: &str, token: &CancellationToken) -> Result<Pr
             length: Some(total),
             ranged: true,
             validator,
+            filename,
+            content_type,
         })
     } else if response.status().as_u16() == 200 {
         Ok(Probe {
@@ -120,6 +126,8 @@ async fn probe(inner: &Inner, url: &str, token: &CancellationToken) -> Result<Pr
             length: response.content_length(),
             ranged: false,
             validator,
+            filename,
+            content_type,
         })
     } else if response.status().as_u16() == 416
         && response
@@ -132,9 +140,158 @@ async fn probe(inner: &Inner, url: &str, token: &CancellationToken) -> Result<Pr
             length: Some(0),
             ranged: false,
             validator,
+            filename,
+            content_type,
         })
     } else {
         Err(Error::Http(response.status().as_u16()))
+    }
+}
+
+fn response_content_type(response: &Response) -> Option<String> {
+    response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+fn content_disposition_filename(response: &Response) -> Option<String> {
+    response
+        .headers()
+        .get(header::CONTENT_DISPOSITION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(parse_content_disposition_filename)
+}
+
+fn parse_content_disposition_filename(header: &str) -> Option<String> {
+    let params = disposition_params(header);
+    let extended = params
+        .iter()
+        .rev()
+        .find(|(key, _)| key == "filename*")
+        .and_then(|(_, value)| decode_extended_filename(value))
+        .and_then(|value| safe_filename(&value));
+    extended.or_else(|| {
+        params
+            .iter()
+            .rev()
+            .find(|(key, _)| key == "filename")
+            .and_then(|(_, value)| safe_filename(value))
+    })
+}
+
+fn disposition_params(header: &str) -> Vec<(String, String)> {
+    let mut params = Vec::new();
+    let mut current = String::new();
+    let mut quoted = false;
+    let mut escaped = false;
+    for character in header.chars() {
+        if escaped {
+            current.push(character);
+            escaped = false;
+            continue;
+        }
+        if quoted && character == '\\' {
+            current.push(character);
+            escaped = true;
+            continue;
+        }
+        match character {
+            '"' => {
+                quoted = !quoted;
+                current.push(character);
+            }
+            ';' if !quoted => {
+                push_disposition_param(&mut params, &current);
+                current.clear();
+            }
+            _ => current.push(character),
+        }
+    }
+    push_disposition_param(&mut params, &current);
+    params
+}
+
+fn push_disposition_param(params: &mut Vec<(String, String)>, raw: &str) {
+    let Some((key, value)) = raw.split_once('=') else {
+        return;
+    };
+    let key = key.trim().to_ascii_lowercase();
+    if key.is_empty() {
+        return;
+    }
+    let value = value.trim();
+    let value = if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') {
+        unquote(&value[1..value.len() - 1])
+    } else {
+        value.to_owned()
+    };
+    params.push((key, value));
+}
+
+fn unquote(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut characters = value.chars();
+    while let Some(character) = characters.next() {
+        if character == '\\' {
+            if let Some(next) = characters.next() {
+                output.push(next);
+            }
+        } else {
+            output.push(character);
+        }
+    }
+    output
+}
+
+fn decode_extended_filename(value: &str) -> Option<String> {
+    let (charset, rest) = value.split_once('\'')?;
+    let (_language, encoded) = rest.split_once('\'')?;
+    if !charset.is_empty() && !charset.eq_ignore_ascii_case("utf-8") {
+        return None;
+    }
+    percent_decode(encoded)
+}
+
+fn percent_decode(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let high = (*bytes.get(index + 1)? as char).to_digit(16)?;
+            let low = (*bytes.get(index + 2)? as char).to_digit(16)?;
+            decoded.push((high as u8) * 16 + low as u8);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    Some(String::from_utf8_lossy(&decoded).into_owned())
+}
+
+/// Server filenames are untrusted. Remove directories, control characters, and
+/// trailing Windows-ambiguous dots before they reach the naming workflow.
+fn safe_filename(value: &str) -> Option<String> {
+    let base = value.rsplit(['/', '\\']).next().unwrap_or(value);
+    let without_control: String = base
+        .chars()
+        .filter(|character| !character.is_control())
+        .collect();
+    let name = without_control
+        .trim()
+        .trim_end_matches([' ', '.'])
+        .trim()
+        .to_owned();
+    if name.is_empty() || name == "." || name == ".." {
+        None
+    } else {
+        Some(name)
     }
 }
 
@@ -593,4 +750,69 @@ async fn publish(inner: &Inner, id: DownloadId, token: &CancellationToken) -> Re
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_content_disposition_filename;
+
+    #[test]
+    fn reads_quoted_and_unquoted_filenames() {
+        assert_eq!(
+            parse_content_disposition_filename("attachment; filename=\"server-name.zip\""),
+            Some("server-name.zip".into())
+        );
+        assert_eq!(
+            parse_content_disposition_filename("inline; filename=server-name.zip"),
+            Some("server-name.zip".into())
+        );
+    }
+
+    #[test]
+    fn prefers_rfc5987_extended_filenames() {
+        assert_eq!(
+            parse_content_disposition_filename(
+                "attachment; filename=\"fallback.zip\"; filename*=UTF-8''caf%C3%A9%20menu.pdf"
+            ),
+            Some("café menu.pdf".into())
+        );
+    }
+
+    #[test]
+    fn handles_quoted_semicolons_and_escaped_quotes() {
+        assert_eq!(
+            parse_content_disposition_filename("attachment; filename=\"report; final.zip\""),
+            Some("report; final.zip".into())
+        );
+        assert_eq!(
+            parse_content_disposition_filename("attachment; filename=\"say \\\"hi\\\".zip\""),
+            Some("say \"hi\".zip".into())
+        );
+    }
+
+    #[test]
+    fn strips_server_paths_and_rejects_empty_names() {
+        assert_eq!(
+            parse_content_disposition_filename("attachment; filename=\"../../escape.exe\""),
+            Some("escape.exe".into())
+        );
+        assert_eq!(
+            parse_content_disposition_filename("attachment; filename=\"..\""),
+            None
+        );
+        assert_eq!(
+            parse_content_disposition_filename("attachment; filename=\"\""),
+            None
+        );
+    }
+
+    #[test]
+    fn falls_back_when_extended_charset_is_not_utf8() {
+        assert_eq!(
+            parse_content_disposition_filename(
+                "attachment; filename=\"fallback.zip\"; filename*=ISO-8859-1'en'%A3.zip"
+            ),
+            Some("fallback.zip".into())
+        );
+    }
 }

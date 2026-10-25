@@ -1,159 +1,355 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 
 /*
- * OSDM design system — "instrument bench".
- * Cool drafting-slate surfaces, IBM Plex Mono for all measurement data,
- * status colors reserved for semantics. Both themes share one hue family.
+ * OSDM — "transfer desk".
+ *
+ * A download is a quantity of data moving across connections and settling
+ * onto disk. The interface treats that movement as an instrument reading:
+ * warm graphite or bone-paper surfaces, one ultramarine signal, and the
+ * lane field for every transfer.
  */
 
-@theme {
+@custom-variant dark (&:where([data-theme="dark"] *));
+
+@theme inline {
   --font-display: "Familjen Grotesk", "IBM Plex Sans", sans-serif;
   --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", monospace;
 
-  --color-bg: var(--c-bg);
-  --color-panel: var(--c-panel);
-  --color-raise: var(--c-raise);
-  --color-line: var(--c-line);
-  --color-line-soft: var(--c-line-soft);
-  --color-ink: var(--c-ink);
-  --color-ink-strong: var(--c-ink-strong);
-  --color-muted: var(--c-muted);
-  --color-faint: var(--c-faint);
-  --color-accent: var(--c-accent);
-  --color-accent-soft: var(--c-accent-soft);
-  --color-accent-ink: var(--c-accent-ink);
-  --color-ok: var(--c-ok);
-  --color-ok-soft: var(--c-ok-soft);
-  --color-warn: var(--c-warn);
-  --color-warn-soft: var(--c-warn-soft);
-  --color-danger: var(--c-danger);
-  --color-danger-soft: var(--c-danger-soft);
+  /* shadcn/ui contract */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--panel);
+  --color-card-foreground: var(--foreground);
+  --color-popover: var(--panel);
+  --color-popover-foreground: var(--foreground);
+  --color-primary: var(--brand);
+  --color-primary-foreground: var(--brand-ink);
+  --color-secondary: var(--raise);
+  --color-secondary-foreground: var(--foreground);
+  --color-muted: var(--raise);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--hover);
+  --color-accent-foreground: var(--foreground);
+  --color-destructive: var(--danger);
+  --color-border: var(--line);
+  --color-input: var(--line);
+  --color-ring: var(--ring);
 
-  --radius-control: 6px;
-  --radius-panel: 10px;
+  /* OSDM surfaces + signal */
+  --color-panel: var(--panel);
+  --color-raise: var(--raise);
+  --color-hover: var(--hover);
+  --color-selected: var(--selected);
+  --color-row-hover: var(--row-hover);
+  --color-line: var(--line);
+  --color-line-soft: var(--line-soft);
+  --color-ink-strong: var(--ink-strong);
+  --color-faint: var(--faint);
+  --color-brand: var(--brand);
+  --color-brand-strong: var(--brand-strong);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-line: var(--brand-line);
+  --color-brand-ink: var(--brand-ink);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+
+  --radius-sm: 5px;
+  --radius-md: 7px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
 }
 
 :root,
 [data-theme="dark"] {
-  --c-bg: #0e141b;
-  --c-panel: #141b24;
-  --c-raise: #1b2430;
-  --c-line: #263140;
-  --c-line-soft: #1f2937;
-  --c-ink: #e7eef6;
-  --c-ink-strong: #ffffff;
-  --c-muted: #8fa2b6;
-  --c-faint: #55677c;
-  --c-accent: #55a0e8;
-  --c-accent-soft: #1c3450;
-  --c-accent-ink: #0b1520;
-  --c-ok: #57c48f;
-  --c-ok-soft: #173226;
-  --c-warn: #d9a23e;
-  --c-warn-soft: #33290f;
-  --c-danger: #de6a5c;
-  --c-danger-soft: #38180f;
   color-scheme: dark;
+
+  --background: #0b0d0f;
+  --foreground: #e9e8e2;
+  --panel: #101318;
+  --raise: #171b21;
+  --hover: #1c2128;
+  --selected: #171b21;
+  --row-hover: #101318;
+  --line: #272d36;
+  --line-soft: #1c2229;
+  --ink-strong: #fbfbf6;
+  --muted-foreground: #9aa0aa;
+  --faint: #79808b;
+
+  --brand: #929dff;
+  --brand-strong: #7f8cff;
+  --brand-soft: #1a2044;
+  --brand-line: #353e78;
+  --brand-ink: #0b0d18;
+  --ring: #929dff;
+
+  --ok: #63d3a3;
+  --ok-soft: #10261f;
+  --warn: #e7bb63;
+  --warn-soft: #2a230f;
+  --danger: #f18474;
+  --danger-soft: #2c1714;
+  --lane-head: #f4f1e8;
+  --lane-head-glow: color-mix(in oklab, var(--brand) 55%, transparent);
 }
 
 [data-theme="light"] {
-  --c-bg: #edf0f4;
-  --c-panel: #ffffff;
-  --c-raise: #f5f7fa;
-  --c-line: #d9dfe8;
-  --c-line-soft: #e5eaf1;
-  --c-ink: #1a2330;
-  --c-ink-strong: #0c131c;
-  --c-muted: #5d6c7f;
-  --c-faint: #93a2b3;
-  --c-accent: #1e66c7;
-  --c-accent-soft: #dcecfd;
-  --c-accent-ink: #0c131c;
-  --c-ok: #1f9d6b;
-  --c-ok-soft: #ddf3e8;
-  --c-warn: #a17615;
-  --c-warn-soft: #f9efd4;
-  --c-danger: #c24f44;
-  --c-danger-soft: #fae3e0;
   color-scheme: light;
+
+  --background: #efeee8;
+  --foreground: #1d1e1b;
+  --panel: #fbf9f4;
+  --raise: #f3f1ea;
+  --hover: #e9e7df;
+  --selected: #fbf9f4;
+  --row-hover: #f4f2eb;
+  --line: #d9d6cc;
+  --line-soft: #e5e2d8;
+  --ink-strong: #0b0c0a;
+  --muted-foreground: #5c5e57;
+  --faint: #6a6c63;
+
+  --brand: #3843c4;
+  --brand-strong: #2c36b0;
+  --brand-soft: #e2e3f9;
+  --brand-line: #c3c6ee;
+  --brand-ink: #fcfbf7;
+  --ring: #3843c4;
+
+  --ok: #137a53;
+  --ok-soft: #ddefe5;
+  --warn: #8b6412;
+  --warn-soft: #f3e5c5;
+  --danger: #ae3a2e;
+  --danger-soft: #f8e1dc;
+  --lane-head: #14150f;
+  --lane-head-glow: transparent;
 }
 
-html {
-  scrollbar-color: var(--c-line) transparent;
+@layer base {
+  * {
+    border-color: var(--line);
+  }
+
+  html {
+    height: 100%;
+    scrollbar-color: var(--line) transparent;
+  }
+
+  body {
+    height: 100%;
+    margin: 0;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow: hidden;
+  }
+
+  #root {
+    height: 100%;
+  }
+
+  ::selection {
+    background: var(--brand-soft);
+    color: var(--ink-strong);
+  }
+
+  [data-slot="input"]:focus-visible,
+  [data-slot="select-trigger"]:focus-visible {
+    outline: none;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 11px;
+    height: 11px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--line);
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-clip: padding-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--faint);
+    border: 3px solid transparent;
+    background-clip: padding-box;
+  }
 }
 
-body {
-  background-color: var(--c-bg);
-  color: var(--c-ink);
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
+@layer utilities {
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    line-height: 1.2;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* --- Live lane sheen --------------------------------------------------
+ * Only the in-flight portion moves. Committed bytes never animate. */
+
+@keyframes lane-sweep {
+  from {
+    transform: translateX(-110%);
+  }
+  to {
+    transform: translateX(340%);
+  }
+}
+
+.lane-live {
+  position: relative;
   overflow: hidden;
 }
 
-::selection {
-  background: var(--c-accent-soft);
-}
-
-:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: 1px;
-}
-
-kbd {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  line-height: 1;
-  border: 1px solid var(--c-line);
-  border-bottom-width: 2px;
-  border-radius: 4px;
-  padding: 2px 5px;
-  color: var(--c-muted);
-  background: var(--c-raise);
-}
-
-/* --- Signature: the segment ribbon -----------------------------------
- * Committed bytes are solid; live (in-flight) bytes pulse underneath.
- * Reduced motion disables the pulse; the distinction stays visible. */
-
-@keyframes live-pulse {
-  0%, 100% { opacity: 0.9; }
-  50% { opacity: 0.55; }
-}
-
-@keyframes flow-stripes {
-  from { background-position: 0 0; }
-  to { background-position: 16px 0; }
-}
-
-@keyframes rise-in {
-  from { transform: translateY(4px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
-}
-
-.ribbon-live {
-  animation: live-pulse 1.4s ease-in-out infinite;
-}
-
-.flow-stripes {
-  background-image: repeating-linear-gradient(
-    45deg,
-    var(--c-line) 0 4px,
-    transparent 4px 8px
+.lane-live::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 10%,
+    color-mix(in oklab, white 62%, transparent) 50%,
+    transparent 90%
   );
-  animation: flow-stripes 1.1s linear infinite;
+  transform: translateX(-110%);
+  animation: lane-sweep 2.4s cubic-bezier(0.45, 0, 0.2, 1) infinite;
+  pointer-events: none;
 }
 
-.rise-in {
-  animation: rise-in 180ms ease-out both;
+/* The transfer head: the exact boundary between durable and in-flight bytes.
+ * A one-pixel playhead keeps movement visible when live bytes are tiny. */
+.lane-head {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--lane-head);
+  box-shadow: 0 0 6px var(--lane-head-glow);
+  pointer-events: none;
+}
+
+@keyframes lane-indeterminate {
+  0% {
+    left: -42%;
+  }
+  100% {
+    left: 108%;
+  }
+}
+
+.lane-indeterminate {
+  position: relative;
+  overflow: hidden;
+}
+
+.lane-indeterminate::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -42%;
+  width: 38%;
+  background: linear-gradient(90deg, transparent, var(--brand), transparent);
+  opacity: 0.6;
+  animation: lane-indeterminate 1.8s ease-in-out infinite;
+}
+
+@keyframes row-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.row-in {
+  animation: row-in 240ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.panel-in {
+  animation: panel-in 220ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.breathe {
+  animation: breathe 2.2s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ribbon-live,
-  .flow-stripes {
+  .lane-live::after,
+  .lane-indeterminate::after,
+  .row-in,
+  .panel-in,
+  .breathe {
     animation: none;
   }
-  .rise-in {
-    animation: none;
+
+  .lane-head {
+    box-shadow: none;
+  }
+
+  .lane-indeterminate::after {
+    left: 30%;
+    width: 38%;
+  }
+
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
   }
 }

@@ -1,23 +1,30 @@
+import type { ReactNode } from "react";
+
+import mark from "@/assets/osdm-mark.png";
+
 interface EmptyStateProps {
   title: string;
   body: string;
-  hint?: string;
+  action?: ReactNode;
 }
 
 /** An empty screen is an invitation to act, not a mood. */
-export function EmptyState({ title, body }: EmptyStateProps) {
+export function EmptyState({ title, body, action }: EmptyStateProps) {
   return (
-    <div className="max-w-88 text-center">
-      <div
-        aria-hidden="true"
-        className="mx-auto mb-4 flex h-10 w-16 items-end justify-center gap-[3px] rounded-md border border-line-soft bg-panel p-2"
-      >
-        <span className="h-2 w-full rounded-[2px] bg-line" />
-        <span className="h-3.5 w-full rounded-[2px] bg-ok" />
-        <span className="h-2 w-full rounded-[2px] bg-line" />
+    <div className="max-w-[22rem] text-center">
+      <div aria-hidden="true" className="mx-auto mb-4 w-14">
+        <img
+          src={mark}
+          alt=""
+          width={512}
+          height={512}
+          draggable={false}
+          className="h-auto w-full select-none"
+        />
       </div>
-      <h2 className="font-display text-[15px] font-semibold text-ink-strong">{title}</h2>
-      <p className="mx-auto mt-1.5 max-w-72 text-[12.5px] leading-relaxed text-muted">{body}</p>
+      <h2 className="font-display text-[18px] font-semibold tracking-[-0.025em] text-ink-strong">{title}</h2>
+      <p className="mx-auto mt-2 max-w-[20rem] text-[12px] leading-relaxed text-muted-foreground">{body}</p>
+      {action ? <div className="mt-5 flex justify-center">{action}</div> : null}
     </div>
   );
 }

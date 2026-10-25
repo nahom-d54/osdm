@@ -1,5 +1,6 @@
 [workspace]
-members = ["crates/download-engine"]
+members = ["crates/download-engine", "src-tauri"]
+default-members = ["crates/download-engine"]
 resolver = "2"
 
 [workspace.package]

@@ -59,6 +59,17 @@ export interface DownloadRequest {
   destination: string;
 }
 
+/** Metadata returned by a pre-download probe; no queue entry is created. */
+export interface UrlProbe {
+  /** URL after redirects. */
+  final_url: string;
+  /** Content-Disposition filename, with path components removed. */
+  filename: string | null;
+  content_type: string | null;
+  total_bytes: number | null;
+  ranged: boolean;
+}
+
 export function downloadedBytes(download: Download): number {
   return download.segments.reduce((sum, s) => sum + s.downloaded, 0);
 }

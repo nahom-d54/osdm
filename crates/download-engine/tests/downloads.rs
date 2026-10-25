@@ -174,6 +174,55 @@ fn range_not_satisfiable(size: u64) -> Response<Body> {
         .unwrap()
 }
 
+struct ProbeServer {
+    url: String,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for ProbeServer {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+async fn probe_server() -> ProbeServer {
+    let router = Router::new().route("/named", get(named_handler)).route(
+        "/redirect",
+        get(|| async { axum::response::Redirect::temporary("/named") }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/named", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    ProbeServer { url, task }
+}
+
+async fn named_handler(headers: HeaderMap) -> Response<Body> {
+    let ranged = headers
+        .get("range")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value == "bytes=0-0");
+    let mut response = Response::builder()
+        .header("etag", "\"named\"")
+        .header(
+            "content-disposition",
+            "attachment; filename=\"server-name.zip\"",
+        )
+        .header("content-type", "application/zip; charset=binary");
+    if ranged {
+        response = response
+            .status(206)
+            .header("content-range", "bytes 0-0/12345")
+            .header("content-length", "1");
+        response.body(Body::from(vec![b'x'])).unwrap()
+    } else {
+        response
+            .status(200)
+            .header("content-length", "12345")
+            .body(Body::empty())
+            .unwrap()
+    }
+}
+
 async fn handler(State(state): State<Arc<ServerState>>, headers: HeaderMap) -> Response<Body> {
     let request = state.requests.fetch_add(1, Ordering::SeqCst);
     let active = state.active.fetch_add(1, Ordering::SeqCst) + 1;
@@ -317,6 +366,33 @@ async fn verify(engine: &Engine, server: &Server, id: download_engine::DownloadI
     assert_eq!(download.downloaded_bytes(), expected.len() as u64);
     assert!(!download.temporary_path.exists());
     download
+}
+
+#[tokio::test]
+async fn probe_reports_server_filename_without_enqueueing() {
+    let server = probe_server().await;
+    let dir = TempDir::new().unwrap();
+    let engine = Engine::open(dir.path().join("queue.db"), config())
+        .await
+        .unwrap();
+
+    let info = engine.probe(&server.url).await.unwrap();
+
+    assert_eq!(info.final_url, server.url);
+    assert_eq!(info.filename.as_deref(), Some("server-name.zip"));
+    assert_eq!(info.content_type.as_deref(), Some("application/zip"));
+    assert_eq!(info.total_bytes, Some(12345));
+    assert!(info.ranged);
+
+    let redirected = engine
+        .probe(&server.url.replace("/named", "/redirect"))
+        .await
+        .unwrap();
+    assert_eq!(redirected.final_url, server.url);
+    assert_eq!(redirected.filename.as_deref(), Some("server-name.zip"));
+
+    assert!(engine.snapshot().await.is_empty());
+    engine.shutdown().await.unwrap();
 }
 
 #[tokio::test]
@@ -927,17 +1003,17 @@ async fn schema_initializes_and_rejects_newer_or_corrupt_databases() {
     let engine = Engine::open(&fresh, config()).await.unwrap();
     engine.shutdown().await.unwrap();
     drop(engine);
-    assert_eq!(database_version(&fresh).await, 1);
+    assert_eq!(database_version(&fresh).await, 2);
 
     let unversioned = dir.path().join("unversioned.db");
     create_database(&unversioned, 0, None).await;
     let engine = Engine::open(&unversioned, config()).await.unwrap();
     engine.shutdown().await.unwrap();
     drop(engine);
-    assert_eq!(database_version(&unversioned).await, 1);
+    assert_eq!(database_version(&unversioned).await, 2);
 
     let newer = dir.path().join("newer.db");
-    create_database(&newer, 2, None).await;
+    create_database(&newer, 3, None).await;
     let error = match Engine::open(&newer, config()).await {
         Ok(_) => panic!("newer schema was accepted"),
         Err(error) => error,

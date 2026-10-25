@@ -34,6 +34,38 @@ export function formatPercent(downloaded: number, total: number | null): string 
   return `${Math.min(100, Math.floor((downloaded / total) * 100))}%`;
 }
 
+/** Last path segment, tolerant of Windows and POSIX separators. */
+export function fileNameOf(path: string): string {
+  const cleaned = path.replace(/\\/g, "/");
+  return cleaned.slice(cleaned.lastIndexOf("/") + 1) || path;
+}
+
+/** File extension as a short uppercase badge, e.g. "ISO", "7Z", "TAR". */
+export function extensionOf(path: string): string {
+  const name = fileNameOf(path);
+  const dot = name.lastIndexOf(".");
+  if (dot <= 0 || dot === name.length - 1) return "FILE";
+  const extension = name.slice(dot + 1).replace(/[^a-z0-9]/gi, "").slice(0, 4);
+  return extension ? extension.toUpperCase() : "FILE";
+}
+
+/** Host without the www prefix; falls back to the raw string. */
+export function hostOf(url: string): string {
+  try {
+    return new URL(url).host.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
+export function joinPath(directory: string, filename: string): string {
+  return `${directory.replace(/[\\/]+$/, "")}\\${filename}`;
+}
+
+export function plural(count: number, singular: string, many = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : many}`;
+}
+
 /** Monotonic clock string for history entries, e.g. "14:03". */
 export function formatClock(ms: number): string {
   const d = new Date(ms);
@@ -50,14 +82,27 @@ export function suggestFilename(url: string): string {
   } catch {
     // fall through; URL is validated elsewhere
   }
-  if (!name) name = "download.bin";
-  const decoded = safeDecode(name);
-  const dot = decoded.lastIndexOf(".");
-  const stem = dot > 0 ? decoded.slice(0, dot) : decoded;
-  const ext = dot > 0 ? decoded.slice(dot + 1).toLowerCase() : "";
-  const cleanStem = sanitize(stem) || "download";
-  const cleanExt = ext && /^[a-z0-9]{1,12}$/.test(ext) ? `.${ext}` : "";
-  return `${cleanStem}${cleanExt}`;
+  return sanitizeFilename(name ?? "") || "download.bin";
+}
+
+/**
+ * Make a server- or link-provided name safe for the target filesystem.
+ * Strips directories, control characters, and Windows-ambiguous edges while
+ * preserving Unicode and the original case.
+ */
+export function sanitizeFilename(value: string): string {
+  const decoded = safeDecode(value);
+  const base = decoded.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "";
+  const trimmed = base.replace(/[. ]+$/g, "").trim();
+  if (!trimmed) return "";
+
+  const dot = trimmed.lastIndexOf(".");
+  const stem = dot > 0 ? trimmed.slice(0, dot) : trimmed;
+  const extension = dot > 0 ? trimmed.slice(dot + 1).toLowerCase() : "";
+  const cleanStem = sanitizeComponent(stem) || "download";
+  const cleanExtension = extension && /^[a-z0-9]{1,12}$/.test(extension) ? `.${extension}` : "";
+  const name = `${cleanStem}${cleanExtension}`;
+  return /^\.+$/.test(name) ? "" : name;
 }
 
 function safeDecode(value: string): string {
@@ -69,7 +114,7 @@ function safeDecode(value: string): string {
 }
 
 /** Characters Windows rejects in filenames. */
-function sanitize(value: string): string {
+function sanitizeComponent(value: string): string {
   const cleaned = value.replace(/[<>:"/\\|?*\u0000-\u001f]+/g, " ").replace(/\s+/g, " ").trim();
   // Windows reserves these stems.
   const reserved = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i;

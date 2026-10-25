@@ -1,5 +1,5 @@
 import type { EngineBridge, EngineErrorListener, SnapshotListener } from "@/lib/bridge/types";
-import type { Download, EngineConfig, Segment } from "@/lib/types";
+import type { Download, EngineConfig, Segment, UrlProbe } from "@/lib/types";
 import { suggestFilename } from "@/lib/format";
 
 export class BridgeError extends Error {}
@@ -41,10 +41,29 @@ function temporaryPathFor(destination: string): string {
   return dot > 0 ? `${destination.slice(0, dot)}${".osdm-part."}${destination.slice(dot)}` : `${destination}.osdm-part`;
 }
 
+const CONTENT_TYPES: Record<string, string> = {
+  iso: "application/x-iso9660-image",
+  zip: "application/zip",
+  exe: "application/vnd.microsoft.portable-executable",
+  msi: "application/x-msi",
+  pdf: "application/pdf",
+  gguf: "application/octet-stream",
+  mp4: "video/mp4",
+  mkv: "video/x-matroska",
+  zst: "application/zstd",
+};
+
+function contentTypeFor(value: string): string {
+  const path = value.split("?")[0].split("#")[0];
+  const extension = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
+  return CONTENT_TYPES[extension] ?? "application/octet-stream";
+}
+
 /**
  * Simulates the engine contract for browser development: probe → segmented
  * transfer with checkpoints → hard-link publication. Failure injection is
- * triggered by URL fragments (`#fail-network`, `#slow`).
+ * triggered by URL fragments (`#fail-network`, `#slow`); `#server-name` gives
+ * the mock probe a Content-Disposition name, and `#probe-fail` rejects the probe.
  */
 export class MockBridge implements EngineBridge {
   readonly kind = "mock" as const;
@@ -63,6 +82,14 @@ export class MockBridge implements EngineBridge {
   private dirty = false;
   private timer: ReturnType<typeof setInterval> | null = null;
 
+  constructor() {
+    // `?demo` fills the web mock with a representative library for design work.
+    // The desktop shell never uses this bridge.
+    if (new URLSearchParams(window.location.search).has("demo")) {
+      this.seedDemo();
+    }
+  }
+
   async open(config: EngineConfig): Promise<void> {
     this.config = { ...config };
     this.startTicker();
@@ -76,6 +103,80 @@ export class MockBridge implements EngineBridge {
   private startTicker(): void {
     if (this.timer) return;
     this.timer = setInterval(() => this.tick(), TICK_MS);
+  }
+
+  private seedDemo(): void {
+    const specs: DemoSpec[] = [
+      {
+        url: "https://releases.ubuntu.com/24.04.2/ubuntu-24.04.2-desktop-amd64.iso",
+        destination: "C:\\Users\\you\\Downloads\\ubuntu-24.04.2-desktop-amd64.iso",
+        state: "Downloading",
+        totalMib: 5530,
+        parts: 4,
+        progress: 0.61,
+        rateMib: 11.2,
+      },
+      {
+        url: "https://get.enterprisedb.com/postgresql/postgresql-17.2-1-windows-x64.exe",
+        destination: "C:\\Users\\you\\Downloads\\postgresql-17.2-1-windows-x64.exe",
+        state: "Downloading",
+        totalMib: 326,
+        parts: 2,
+        progress: 0.34,
+        rateMib: 6.4,
+      },
+      {
+        url: "https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct/resolve/main/llama-3.3-70b-instruct-Q4_K_M.gguf",
+        destination: "C:\\Users\\you\\Downloads\\llama-3.3-70b-instruct-Q4_K_M.gguf",
+        state: "Downloading",
+        totalMib: 40550,
+        parts: 4,
+        progress: 0.18,
+        rateMib: 4.6,
+      },
+      {
+        url: "https://files.archive.org/field-recordings-2f-2026.zip",
+        destination: "C:\\Users\\you\\Downloads\\field-recordings-2f-2026.zip",
+        state: "Paused",
+        totalMib: 1946,
+        parts: 4,
+        progress: 0.47,
+      },
+      {
+        url: "https://dev.mysql.com/get/Downloads/MySQLGUITools/mysql-workbench-community-8.0.41-winx64.msi",
+        destination: "C:\\Users\\you\\Downloads\\mysql-workbench-community-8.0.41-winx64.msi",
+        state: "Queued",
+        totalMib: 72,
+        parts: 1,
+        progress: 0,
+      },
+      {
+        url: "https://updates.signal.org/desktop/signal-desktop-win-7.42.0.exe",
+        destination: "C:\\Users\\you\\Downloads\\signal-desktop-win-7.42.0.exe",
+        state: "Failed",
+        totalMib: 152,
+        parts: 4,
+        progress: 0.37,
+        error: "network request failed",
+      },
+      {
+        url: "https://teenage.engineering/guides/op-1-field-guide.pdf",
+        destination: "C:\\Users\\you\\Downloads\\op-1-field-guide.pdf",
+        state: "Completed",
+        totalMib: 44,
+        parts: 1,
+        progress: 1,
+      },
+      {
+        url: "https://static.rust-lang.org/dist/rust-1.89.0-x86_64-pc-windows-msvc.msi",
+        destination: "C:\\Users\\you\\Downloads\\rust-1.89.0-x86_64-pc-windows-msvc.msi",
+        state: "Completed",
+        totalMib: 218,
+        parts: 2,
+        progress: 1,
+      },
+    ];
+    this.entries = specs.map(seededEntry);
   }
 
   private markDirty(): void {
@@ -117,6 +218,31 @@ export class MockBridge implements EngineBridge {
     this.entries.push(entry);
     this.markDirty();
     return id;
+  }
+
+  async probe(url: string): Promise<UrlProbe> {
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      throw new BridgeError("Enter a valid HTTP(S) URL.");
+    }
+    if (url.includes("#probe-fail")) {
+      throw new BridgeError("network request failed");
+    }
+    const serverHint = parsed.hash === "#server-name";
+    const requestedName = parsed.searchParams.get("filename");
+    parsed.hash = "";
+    const finalUrl = parsed.toString();
+    const filename = requestedName ?? (serverHint ? "server-named-download.zip" : null);
+    return {
+      final_url: finalUrl,
+      filename,
+      content_type: contentTypeFor(filename ?? finalUrl),
+      total_bytes: totalSizeFor(finalUrl),
+      ranged: true,
+    };
   }
 
   private find(id: string): Entry {
@@ -225,6 +351,10 @@ export class MockBridge implements EngineBridge {
   async pickDirectory(_title: string, defaultPath?: string): Promise<string | null> {
     await new Promise((r) => setTimeout(r, 250));
     return defaultPath ?? "C:\\Users\\you\\Downloads";
+  }
+
+  async defaultDownloadDirectory(): Promise<string> {
+    return "C:\\Users\\you\\Downloads";
   }
 
   async suggestFilename(url: string): Promise<string> {
@@ -377,6 +507,60 @@ export class MockBridge implements EngineBridge {
       }
     }
   }
+}
+
+interface DemoSpec {
+  url: string;
+  destination: string;
+  state: Download["state"];
+  totalMib: number;
+  parts: number;
+  progress: number;
+  rateMib?: number;
+  error?: string;
+}
+
+function seededEntry(spec: DemoSpec): Entry {
+  const MIB = 1024 * 1024;
+  const total = spec.totalMib * MIB;
+  const parts = Math.max(1, spec.parts);
+  const segments = layoutSegments(total, parts);
+  const checkpoint = MIB;
+
+  for (const segment of segments) {
+    const size = (segment.end ?? 0) - segment.start;
+    const committed = Math.min(Math.floor((size * spec.progress) / checkpoint) * checkpoint, size);
+    segment.committed = spec.state === "Completed" ? size : committed;
+    segment.downloaded =
+      spec.state === "Downloading"
+        ? Math.min(size, segment.committed + MIB * 0.35)
+        : segment.committed;
+  }
+
+  const rate = spec.rateMib ? spec.rateMib * MIB : 0;
+  const received = segments.reduce((sum, segment) => sum + segment.downloaded, 0);
+  const remaining = Math.max(0, total - received);
+
+  return {
+    download: {
+      id: crypto.randomUUID(),
+      url: spec.url,
+      destination: spec.destination,
+      temporary_path: temporaryPathFor(spec.destination),
+      state: spec.state,
+      total_bytes: total,
+      segments,
+      error: spec.error ?? null,
+      bytes_per_second: spec.state === "Downloading" ? rate : 0,
+      eta_seconds: spec.state === "Downloading" && rate > 0 ? Math.ceil(remaining / rate) : null,
+      validator: `W/"osdm-demo-${spec.totalMib}-${parts}"`,
+      ranged: true,
+    },
+    phase: spec.state === "Completed" ? "publish" : "run",
+    ticksInPhase: 0,
+    rates: spec.state === "Downloading" ? segments.map(() => rate / parts) : [],
+    stopped: false,
+  };
 }
 
 function estimateEta(d: Download): number | null {
