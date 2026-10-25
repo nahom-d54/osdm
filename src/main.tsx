@@ -10,6 +10,9 @@ import "@fontsource/familjen-grotesk/600.css";
 import "@fontsource/familjen-grotesk/700.css";
 import "@/styles.css";
 import App from "@/App";
+import { installProductionGuards } from "@/lib/production-guards";
+
+installProductionGuards();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
