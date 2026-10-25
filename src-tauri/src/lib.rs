@@ -517,6 +517,14 @@ mod tests {
         let window = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
             .build()
             .unwrap();
+        // A local origin is required for app commands to bypass the IPC ACL.
+        // Windows serves the custom protocol as http://tauri.localhost; Linux
+        // and macOS use tauri://localhost.
+        let origin = if cfg!(windows) {
+            "http://tauri.localhost"
+        } else {
+            "tauri://localhost"
+        };
         let invoke = |command: &str, body: Value| {
             tauri::test::get_ipc_response(
                 &window,
@@ -524,7 +532,7 @@ mod tests {
                     cmd: command.into(),
                     callback: tauri::ipc::CallbackFn(0),
                     error: tauri::ipc::CallbackFn(1),
-                    url: "http://tauri.localhost".parse().unwrap(),
+                    url: origin.parse().unwrap(),
                     body: tauri::ipc::InvokeBody::Json(body),
                     headers: Default::default(),
                     invoke_key: tauri::test::INVOKE_KEY.into(),

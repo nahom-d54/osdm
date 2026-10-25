@@ -1,0 +1,7 @@
+# Cargo runs test binaries from the package directory. Resolve the workspace
+# root here so the Windows test-manifest runner can be found from any package.
+[env]
+OSDM_REPO_ROOT = { value = ".", relative = true }
+
+[target.'cfg(windows)']
+runner = 'cmd /c powershell -NoProfile -ExecutionPolicy Bypass -File %OSDM_REPO_ROOT%\.cargo\windows-runner.ps1'

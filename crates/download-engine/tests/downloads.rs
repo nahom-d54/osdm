@@ -93,21 +93,25 @@ async fn server(mode: Mode) -> Server {
     Server { url, state, task }
 }
 
+#[cfg(windows)]
 struct LargeServer {
     url: String,
     task: tokio::task::JoinHandle<()>,
 }
 
+#[cfg(windows)]
 impl Drop for LargeServer {
     fn drop(&mut self) {
         self.task.abort();
     }
 }
 
+#[cfg(windows)]
 struct LargeState {
     size: u64,
 }
 
+#[cfg(windows)]
 async fn large_server(size: u64) -> LargeServer {
     let state = Arc::new(LargeState { size });
     let router = Router::new()
@@ -119,6 +123,7 @@ async fn large_server(size: u64) -> LargeServer {
     LargeServer { url, task }
 }
 
+#[cfg(windows)]
 async fn large_handler(State(state): State<Arc<LargeState>>, headers: HeaderMap) -> Response<Body> {
     let size = state.size;
     let range = headers.get("range").and_then(|value| value.to_str().ok());
@@ -171,6 +176,7 @@ async fn large_handler(State(state): State<Arc<LargeState>>, headers: HeaderMap)
     response.body(Body::from_stream(stream)).unwrap()
 }
 
+#[cfg(windows)]
 fn range_not_satisfiable(size: u64) -> Response<Body> {
     Response::builder()
         .status(416)
