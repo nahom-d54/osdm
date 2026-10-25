@@ -1,11 +1,9 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/osdm-mark.png">
-    <img alt="OSDM — adaptive desktop download manager" src="docs/assets/osdm-mark.png" width="136">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/osdm-as-text.png">
+    <img alt="OSDM — adaptive desktop download manager" src="docs/assets/osdm-as-text.png" width="280">
   </picture>
 </p>
-
-<h1 align="center">OSDM</h1>
 
 <p align="center">
   <strong>Measured, resilient downloads for the desktop.</strong><br>
@@ -15,6 +13,7 @@
 <p align="center">
   <a href="crates/download-engine/README.md">Engine</a> ·
   <a href="docs/intelligent-downloads.md">Roadmap</a> ·
+  <a href="CHANGELOG.md">Changelog</a> ·
   <a href="CONTRIBUTING.md">Contributing</a> ·
   <a href="CODE_OF_CONDUCT.md">Code of Conduct</a> ·
   <a href="LICENSE">MIT License</a>
@@ -40,14 +39,14 @@ OSDM downloads ordinary HTTP(S) files with the care of a transfer tool and the r
 
 Most downloads fail loudly for ordinary reasons: a server rate-limits a burst of connections, a connection drops mid-file, a signed URL expires, or a laptop sleeps. OSDM treats those as normal operating conditions.
 
-| Under pressure | What OSDM does |
-| --- | --- |
-| The server returns `429` or `503` | Honors `Retry-After`, pauses the whole host, and keeps retrying automatically instead of failing the download. |
-| Extra connections make things slower | A per-host controller reduces concurrency, shrinks request ranges, and retries only after a recovery delay. |
-| A connection breaks after saving bytes | Resumes from the last synced checkpoint; partial progress is never thrown away unnecessarily. |
-| The network is healthy again | Cautiously tests one additional connection and keeps it only when throughput improves. |
-| A download link expires | Lets you replace the URL on a paused or failed download; resuming revalidates saved bytes before reuse. |
-| A file arrives corrupted | Computes SHA-256 before publication and blocks publication when a supplied checksum does not match. |
+| Under pressure                         | What OSDM does                                                                                                 |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| The server returns `429` or `503`      | Honors `Retry-After`, pauses the whole host, and keeps retrying automatically instead of failing the download. |
+| Extra connections make things slower   | A per-host controller reduces concurrency, shrinks request ranges, and retries only after a recovery delay.    |
+| A connection breaks after saving bytes | Resumes from the last synced checkpoint; partial progress is never thrown away unnecessarily.                  |
+| The network is healthy again           | Cautiously tests one additional connection and keeps it only when throughput improves.                         |
+| A download link expires                | Lets you replace the URL on a paused or failed download; resuming revalidates saved bytes before reuse.        |
+| A file arrives corrupted               | Computes SHA-256 before publication and blocks publication when a supplied checksum does not match.            |
 
 ## Features
 
@@ -71,11 +70,11 @@ Release builds are produced automatically from version tags. Verify the installe
 
 ### Requirements
 
-| Tool | Version |
-| --- | --- |
-| Rust | 1.89 or newer |
-| Node.js | 22 or newer |
-| pnpm | 10 |
+| Tool                  | Version                                                                              |
+| --------------------- | ------------------------------------------------------------------------------------ |
+| Rust                  | 1.89 or newer                                                                        |
+| Node.js               | 22 or newer                                                                          |
+| pnpm                  | 10                                                                                   |
 | Desktop prerequisites | [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your platform |
 
 ### Run the desktop app
@@ -105,13 +104,13 @@ The engine suite covers ranged transfers, resumption, checkpoint cancellation, r
 
 ## Project layout
 
-| Path | Responsibility |
-| --- | --- |
+| Path                      | Responsibility                                                                                             |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | `crates/download-engine/` | Headless Tokio download engine: probing, segment scheduling, retries, persistence, integrity, publication. |
-| `src-tauri/` | Native desktop shell, Tauri commands/events, settings, tray, notifications, and update verification. |
-| `src/` | React/TypeScript interface, engine bridge, mock engine, and design system. |
-| `docs/` | Bridge contract, design notes, and the phased intelligent-download roadmap. |
-| `.github/workflows/` | Tag-driven release automation. |
+| `src-tauri/`              | Native desktop shell, Tauri commands/events, settings, tray, notifications, and update verification.       |
+| `src/`                    | React/TypeScript interface, engine bridge, mock engine, and design system.                                 |
+| `docs/`                   | Bridge contract, design notes, and the phased intelligent-download roadmap.                                |
+| `.github/workflows/`      | Tag-driven release automation.                                                                             |
 
 The engine has no Tauri or frontend dependency. The UI consumes full snapshots from a narrow bridge; see [the bridge contract](docs/bridge-contract.md).
 
