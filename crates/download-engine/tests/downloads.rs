@@ -318,13 +318,17 @@ async fn handler(State(state): State<Arc<ServerState>>, headers: HeaderMap) -> R
     if state.mode != Mode::UnknownLength {
         response = response.header("content-length", bytes.len());
     }
-    let truncate_repeatedly = state.mode == Mode::TruncateRepeatedly && bytes.len() > 1536 * 1024;
+    // Inject a fixed number of truncations so the recovery budget is proven
+    // regardless of adaptive request sizing or how fast the runner is.
+    let truncate_repeatedly = state.mode == Mode::TruncateRepeatedly
+        && bytes.len() > 64 * 1024
+        && state.truncated.load(Ordering::SeqCst) < 4;
     let disconnect = (state.mode == Mode::Disconnect && request == 1) || truncate_repeatedly;
     if truncate_repeatedly {
         state.truncated.fetch_add(1, Ordering::SeqCst);
     }
     let fail_after = if truncate_repeatedly {
-        1536 * 1024
+        (bytes.len() / 2).max(64 * 1024)
     } else {
         64 * 1024
     };
