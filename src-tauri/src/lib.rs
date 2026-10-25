@@ -34,6 +34,7 @@ pub(crate) struct Shell {
     quitting: AtomicBool,
     allow_exit: AtomicBool,
     updating: AtomicBool,
+    tray_available: AtomicBool,
 }
 
 impl Shell {
@@ -267,12 +268,12 @@ async fn pick_directory(
 }
 
 #[tauri::command]
-async fn default_download_directory(app: AppHandle) -> Reply<String> {
+async fn default_download_directory<R: tauri::Runtime>(app: AppHandle<R>) -> Reply<String> {
     let resolver = app.path();
-    if let Ok(directory) = resolver.download_dir() {
-        if tokio::fs::try_exists(&directory).await.unwrap_or(false) {
-            return Ok(directory.to_string_lossy().into_owned());
-        }
+    if let Ok(directory) = resolver.download_dir()
+        && tokio::fs::try_exists(&directory).await.unwrap_or(false)
+    {
+        return Ok(directory.to_string_lossy().into_owned());
     }
     resolver
         .home_dir()
@@ -396,33 +397,55 @@ pub fn run() {
                 quitting: AtomicBool::new(false),
                 allow_exit: AtomicBool::new(false),
                 updating: AtomicBool::new(false),
+                tray_available: AtomicBool::new(false),
             });
             let show = MenuItem::with_id(app, "show", "Open OSDM", true, None::<&str>)?;
             let update =
                 MenuItem::with_id(app, "update", "Check for updates…", true, None::<&str>)?;
             let exit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &update, &exit])?;
-            let tray_icon = app
-                .default_window_icon()
-                .cloned()
-                .ok_or_else(|| std::io::Error::other("bundled application icon is missing"))?;
-            TrayIconBuilder::with_id("osdm")
-                .icon(tray_icon)
-                .tooltip("OSDM — downloads continue while hidden")
-                .menu(&menu)
-                .show_menu_on_left_click(true)
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "show" => show_window(app),
-                    "quit" => quit(app.clone()),
-                    "update" => updates::check(app.clone()),
-                    _ => {}
-                })
-                .build(app)?;
+            let tray_available = if let Some(tray_icon) = app.default_window_icon().cloned() {
+                match TrayIconBuilder::with_id("osdm")
+                    .icon(tray_icon)
+                    .tooltip("OSDM — downloads continue while hidden")
+                    .menu(&menu)
+                    .show_menu_on_left_click(true)
+                    .on_menu_event(|app, event| match event.id.as_ref() {
+                        "show" => show_window(app),
+                        "quit" => quit(app.clone()),
+                        "update" => updates::check(app.clone()),
+                        _ => {}
+                    })
+                    .build(app)
+                {
+                    Ok(_) => true,
+                    Err(error) => {
+                        eprintln!("OSDM: system tray unavailable: {error}");
+                        false
+                    }
+                }
+            } else {
+                eprintln!("OSDM: bundled application icon is missing; system tray unavailable");
+                false
+            };
+            app.state::<Shell>()
+                .tray_available
+                .store(tray_available, Ordering::Release);
             Ok(())
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
+                let tray_available = window
+                    .state::<Shell>()
+                    .tray_available
+                    .load(Ordering::Acquire);
+                if !tray_available {
+                    // Without a tray there is no way back to a hidden window,
+                    // so closing must perform a graceful quit instead.
+                    quit(window.app_handle().clone());
+                    return;
+                }
                 if let Err(error) = window.hide() {
                     report(
                         window.app_handle(),
@@ -463,6 +486,7 @@ mod tests {
                 quitting: AtomicBool::new(false),
                 allow_exit: AtomicBool::new(false),
                 updating: AtomicBool::new(false),
+                tray_available: AtomicBool::new(false),
             })
             .invoke_handler(tauri::generate_handler![
                 engine_open,

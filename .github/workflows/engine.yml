@@ -39,3 +39,43 @@ jobs:
       - run: pnpm build
       - run: cargo clippy --locked -p osdm-desktop --all-targets -- -D warnings
       - run: cargo test --locked -p osdm-desktop
+
+  desktop-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: cargo clippy --locked -p osdm-desktop --all-targets -- -D warnings
+      - run: cargo test --locked -p osdm-desktop
+      - name: Bundle Linux package
+        run: pnpm tauri build --bundles deb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: osdm-linux-deb
+          path: target/release/bundle/deb/*.deb
+          if-no-files-found: error
