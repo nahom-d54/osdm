@@ -17,7 +17,13 @@ import { ErrorNote, Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { getBridge } from "@/lib/bridge";
-import { formatBytes, hostOf, joinPath, sanitizeFilename, suggestFilename } from "@/lib/format";
+import {
+  formatBytes,
+  hostOf,
+  joinPath,
+  sanitizeFilename,
+  suggestFilename,
+} from "@/lib/format";
 import type { UrlProbe } from "@/lib/types";
 import { useEngine } from "@/store/engine";
 import { useSettings } from "@/store/settings";
@@ -93,7 +99,9 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
 
   const trimmedUrl = url.trim();
   const urlValid = /^https?:\/\/\S+$/i.test(trimmedUrl);
-  const stem = filename.includes(".") ? filename.slice(0, filename.lastIndexOf(".")) : filename;
+  const stem = filename.includes(".")
+    ? filename.slice(0, filename.lastIndexOf("."))
+    : filename;
   const filenameInvalid =
     filename !== "" &&
     (INVALID_FILENAME.test(filename) ||
@@ -136,17 +144,29 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
     try {
       const result = await getBridge().probe(trimmedUrl);
       if (sequence !== probeSequence.current) return;
-      const folder = directory || (await getBridge().defaultDownloadDirectory().catch(() => ""));
+      const folder =
+        directory ||
+        (await getBridge()
+          .defaultDownloadDirectory()
+          .catch(() => ""));
       if (sequence !== probeSequence.current) return;
-      const serverName = result.filename ? sanitizeFilename(result.filename) : "";
+      const serverName = result.filename
+        ? sanitizeFilename(result.filename)
+        : "";
       setProbe(result);
       setDirectory(folder);
-      setFilename(serverName || suggestFilename(result.final_url || trimmedUrl));
+      setFilename(
+        serverName || suggestFilename(result.final_url || trimmedUrl),
+      );
       setNameSource(serverName ? "server" : "link");
       setStep("confirm");
     } catch (caught) {
       if (sequence !== probeSequence.current) return;
-      const folder = directory || (await getBridge().defaultDownloadDirectory().catch(() => ""));
+      const folder =
+        directory ||
+        (await getBridge()
+          .defaultDownloadDirectory()
+          .catch(() => ""));
       if (sequence !== probeSequence.current) return;
       setProbe({
         final_url: trimmedUrl,
@@ -197,7 +217,10 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
 
   const pickFolder = async () => {
     try {
-      const picked = await getBridge().pickDirectory("Choose download folder", directory || undefined);
+      const picked = await getBridge().pickDirectory(
+        "Choose download folder",
+        directory || undefined,
+      );
       if (picked) setDirectory(picked);
     } catch (caught) {
       setError(errorMessage(caught));
@@ -209,7 +232,9 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
     const base = dot > 0 ? filename.slice(0, dot) : filename;
     const extension = dot > 0 ? filename.slice(dot) : "";
     const existing = base.match(/^(.*) \((\d+)\)$/);
-    const next = existing ? `${existing[1]} (${Number(existing[2]) + 1})` : `${base} (2)`;
+    const next = existing
+      ? `${existing[1]} (${Number(existing[2]) + 1})`
+      : `${base} (2)`;
     setFilename(`${next}${extension}`);
   };
 
@@ -251,7 +276,12 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
             <Button variant="ghost" size="sm" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" form="add-source-form" size="sm" disabled={!urlValid || inspecting}>
+            <Button
+              type="submit"
+              form="add-source-form"
+              size="sm"
+              disabled={!urlValid || inspecting}
+            >
               {inspecting ? (
                 <LoaderCircle className="animate-spin motion-reduce:animate-none" />
               ) : (
@@ -279,8 +309,17 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
             <Button variant="ghost" size="sm" disabled={busy} onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" form="add-confirm-form" size="sm" disabled={!canDownload}>
-              {busy ? <LoaderCircle className="animate-spin motion-reduce:animate-none" /> : <Download />}
+            <Button
+              type="submit"
+              form="add-confirm-form"
+              size="sm"
+              disabled={!canDownload}
+            >
+              {busy ? (
+                <LoaderCircle className="animate-spin motion-reduce:animate-none" />
+              ) : (
+                <Download />
+              )}
               {busy ? "Starting…" : probeError ? "Download anyway" : "Download"}
             </Button>
           </div>
@@ -323,9 +362,6 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
               </div>
             </Field>
             {error && <ErrorNote>{error}</ErrorNote>}
-            <p className="font-mono text-[9px] uppercase tracking-[0.08em] text-faint">
-              The server name is preferred; the link name is the fallback.
-            </p>
           </form>
         ) : (
           <form
@@ -342,10 +378,14 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
                 role="status"
                 className="flex items-start gap-2 rounded-md border border-warn/20 bg-warn-soft/35 px-3 py-2 text-[10.5px] leading-relaxed text-warn"
               >
-                <TriangleAlert className="mt-px size-3.5 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+                <TriangleAlert
+                  className="mt-px size-3.5 shrink-0"
+                  strokeWidth={1.75}
+                  aria-hidden="true"
+                />
                 <span>
-                  Couldn't read a filename from the server ({probeError}). Using the link name; the
-                  transfer may still work.
+                  Couldn't read a filename from the server ({probeError}). Using
+                  the link name; the transfer may still work.
                 </span>
               </div>
             )}
@@ -371,7 +411,11 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
               <dl className="mt-3 grid grid-cols-3 divide-x divide-line-soft border-t border-line-soft pt-3">
                 <Info
                   label="Size"
-                  value={probe?.total_bytes != null ? formatBytes(probe.total_bytes) : "Unknown"}
+                  value={
+                    probe?.total_bytes != null
+                      ? formatBytes(probe.total_bytes)
+                      : "Unknown"
+                  }
                 />
                 <Info
                   label="Type"
@@ -381,7 +425,13 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
                 />
                 <Info
                   label="Ranges"
-                  value={probeError ? "Unknown" : probe?.ranged ? "Supported" : "Single stream"}
+                  value={
+                    probeError
+                      ? "Unknown"
+                      : probe?.ranged
+                        ? "Supported"
+                        : "Single stream"
+                  }
                   className="pl-3"
                 />
               </dl>
@@ -433,7 +483,11 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
                 className="mt-1.5 flex items-center gap-1.5 truncate font-mono text-[10px] text-muted-foreground"
                 title={target ?? undefined}
               >
-                <Folder className="size-3 shrink-0 text-faint" strokeWidth={1.75} aria-hidden="true" />
+                <Folder
+                  className="size-3 shrink-0 text-faint"
+                  strokeWidth={1.75}
+                  aria-hidden="true"
+                />
                 {target ?? "Choose a destination folder"}
               </p>
             </Field>
@@ -441,16 +495,24 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
             {conflict && (
               <ErrorNote>
                 A file already exists at{" "}
-                <span className="break-all font-mono text-[10.5px]">{target}</span>. Choose another
-                name, or{" "}
-                <button type="button" onClick={saveCopy} className="font-semibold underline underline-offset-2">
+                <span className="break-all font-mono text-[10.5px]">
+                  {target}
+                </span>
+                . Choose another name, or{" "}
+                <button
+                  type="button"
+                  onClick={saveCopy}
+                  className="font-semibold underline underline-offset-2"
+                >
                   use a copy name
                 </button>
                 .
               </ErrorNote>
             )}
             {filenameInvalid && (
-              <ErrorNote>The filename contains characters Windows cannot store.</ErrorNote>
+              <ErrorNote>
+                The filename contains characters Windows cannot store.
+              </ErrorNote>
             )}
             {error && <ErrorNote>{error}</ErrorNote>}
           </form>
@@ -468,17 +530,35 @@ function NameSourceTag({ source }: { source: NameSource }) {
         source === "server" ? "text-ok" : "text-faint",
       )}
     >
-      <span className={cn("size-1 rounded-full", source === "server" ? "bg-ok" : "bg-faint")} />
+      <span
+        className={cn(
+          "size-1 rounded-full",
+          source === "server" ? "bg-ok" : "bg-faint",
+        )}
+      />
       {source === "server" ? "server name" : "from link"}
     </span>
   );
 }
 
-function Info({ label, value, title, className }: { label: string; value: string; title?: string; className?: string }) {
+function Info({
+  label,
+  value,
+  title,
+  className,
+}: {
+  label: string;
+  value: string;
+  title?: string;
+  className?: string;
+}) {
   return (
     <div className={cn("min-w-0", className)}>
       <dt className="eyebrow">{label}</dt>
-      <dd className="mt-1 truncate font-mono text-[10px] text-muted-foreground" title={title ?? value}>
+      <dd
+        className="mt-1 truncate font-mono text-[10px] text-muted-foreground"
+        title={title ?? value}
+      >
         {value}
       </dd>
     </div>
