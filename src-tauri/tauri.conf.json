@@ -10,14 +10,25 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "label": "main", "title": "OSDM", "width": 1080, "height": 720, "minWidth": 800, "minHeight": 560 }],
+    "windows": [
+      {
+        "label": "main",
+        "title": "OSDM",
+        "width": 1024,
+        "height": 560,
+        "minWidth": 800,
+        "minHeight": 560
+      }
+    ],
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data:; font-src 'self' data:; connect-src ipc: http://ipc.localhost http://localhost:1420 ws://localhost:1420"
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/64x64.png",
@@ -28,6 +39,9 @@
     ]
   },
   "plugins": {
-    "updater": { "pubkey": "", "endpoints": [] }
+    "updater": {
+      "pubkey": "",
+      "endpoints": []
+    }
   }
 }
