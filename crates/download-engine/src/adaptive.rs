@@ -102,7 +102,7 @@ impl Host {
         Self {
             state: Mutex::new(State {
                 ceiling,
-                limit: ceiling.min(2).max(1),
+                limit: ceiling.clamp(1, 2),
                 next: 0,
                 active: BTreeMap::new(),
                 waiting: 0,

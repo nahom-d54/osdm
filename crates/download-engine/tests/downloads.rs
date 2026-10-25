@@ -664,26 +664,28 @@ async fn congestion_adapts_ranged_subrequests_without_gaps_or_overlap() {
     let id = add(&engine, &server, &dir, "adaptive.bin").await;
     verify(&engine, &server, id).await;
     let size = server.state.content.lock().unwrap().0.len() as u64;
-    let ranges = server.state.ranges.lock().unwrap();
-    let requests: Vec<(u64, u64)> = ranges
-        .iter()
-        .filter(|range| range.as_str() != "bytes=0-0")
-        .map(|range| {
-            let (start, end) = range
-                .strip_prefix("bytes=")
-                .unwrap()
-                .split_once('-')
-                .unwrap();
-            (start.parse().unwrap(), end.parse::<u64>().unwrap() + 1)
-        })
-        .collect();
-    assert!(!requests.is_empty());
-    for (start, end) in requests {
-        assert!(start < size, "request started beyond resource end");
-        assert!(
-            end - start <= 512 * 1024,
-            "adaptive chunk exceeded reduced size"
-        );
+    {
+        let ranges = server.state.ranges.lock().unwrap();
+        let requests: Vec<(u64, u64)> = ranges
+            .iter()
+            .filter(|range| range.as_str() != "bytes=0-0")
+            .map(|range| {
+                let (start, end) = range
+                    .strip_prefix("bytes=")
+                    .unwrap()
+                    .split_once('-')
+                    .unwrap();
+                (start.parse().unwrap(), end.parse::<u64>().unwrap() + 1)
+            })
+            .collect();
+        assert!(!requests.is_empty());
+        for (start, end) in requests {
+            assert!(start < size, "request started beyond resource end");
+            assert!(
+                end - start <= 512 * 1024,
+                "adaptive chunk exceeded reduced size"
+            );
+        }
     }
     engine.shutdown().await.unwrap();
 }
@@ -758,27 +760,29 @@ async fn repeated_truncations_reset_retry_budget_after_checkpointed_progress() {
     );
     assert_eq!(completed.downloaded_bytes(), 32 * 1024 * 1024);
 
-    let ranges = server.state.ranges.lock().unwrap();
-    let starts: Vec<u64> = ranges
-        .iter()
-        .filter(|range| range.as_str() != "bytes=0-0")
-        .map(|range| {
-            range
-                .strip_prefix("bytes=")
-                .unwrap()
-                .split_once('-')
-                .unwrap()
-                .0
-                .parse()
-                .unwrap()
-        })
-        .collect();
-    assert!(starts.len() > 2, "expected multiple ranged subrequests");
-    assert_eq!(starts[0], 0);
-    assert!(
-        starts.windows(2).all(|pair| pair[1] > pair[0]),
-        "subrequests restarted or failed to advance at saved offsets: {starts:?}"
-    );
+    {
+        let ranges = server.state.ranges.lock().unwrap();
+        let starts: Vec<u64> = ranges
+            .iter()
+            .filter(|range| range.as_str() != "bytes=0-0")
+            .map(|range| {
+                range
+                    .strip_prefix("bytes=")
+                    .unwrap()
+                    .split_once('-')
+                    .unwrap()
+                    .0
+                    .parse()
+                    .unwrap()
+            })
+            .collect();
+        assert!(starts.len() > 2, "expected multiple ranged subrequests");
+        assert_eq!(starts[0], 0);
+        assert!(
+            starts.windows(2).all(|pair| pair[1] > pair[0]),
+            "subrequests restarted or failed to advance at saved offsets: {starts:?}"
+        );
+    }
     engine.shutdown().await.unwrap();
 }
 
@@ -822,17 +826,18 @@ async fn update_url_persists_and_reuses_checkpoint_for_same_representation() {
     replacement.state.ranges.lock().unwrap().clear();
     engine.resume(id).await.unwrap();
     verify(&engine, &replacement, id).await;
-    let requests = replacement.state.ranges.lock().unwrap();
-    assert!(persisted.segments.iter().any(|segment| {
-        segment.committed > 0
-            && Some(segment.start + segment.committed) != segment.end
-            && requests.contains(&format!(
-                "bytes={}-{}",
-                segment.start + segment.committed,
-                segment.end.unwrap() - 1
-            ))
-    }));
-    drop(requests);
+    {
+        let requests = replacement.state.ranges.lock().unwrap();
+        assert!(persisted.segments.iter().any(|segment| {
+            segment.committed > 0
+                && Some(segment.start + segment.committed) != segment.end
+                && requests.contains(&format!(
+                    "bytes={}-{}",
+                    segment.start + segment.committed,
+                    segment.end.unwrap() - 1
+                ))
+        }));
+    }
     engine.shutdown().await.unwrap();
 }
 
