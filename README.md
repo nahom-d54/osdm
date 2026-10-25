@@ -62,9 +62,9 @@ The adaptive connection, recovery, and integrity foundation is implemented. Mirr
 
 ## Install
 
-OSDM currently targets **Windows 10/11** with an NSIS setup executable. Open this repository’s **Releases** page and download the latest `OSDM_*_x64-setup.exe` plus `SHA256SUMS.txt`.
+OSDM ships a **Windows 10/11** NSIS installer and a **Linux Debian package** for Ubuntu 24.04 and newer. Open this repository’s **Releases** page and download the matching package plus `SHA256SUMS.txt`.
 
-Release builds are produced automatically from version tags. Verify the installer hash before running it. Builds from source are described below.
+Release builds are produced automatically from version tags, from published GitHub Releases, or from a manual workflow run. Verify the downloaded asset hash before running it. Builds from source are described below.
 
 ## Build from source
 
@@ -128,14 +128,15 @@ Changes to transfer behavior need regression coverage. Bug reports should includ
 
 ## Releases
 
-Pushing a version tag such as `v0.1.0` starts [the release workflow](.github/workflows/release.yml). It:
+The [release workflow](.github/workflows/release.yml) runs when a `v*` tag is pushed, when a GitHub Release is published, or when started manually with an existing tag. It:
 
-1. Verifies the tag matches `src-tauri/tauri.conf.json`.
-2. Installs frontend and Rust dependencies.
-3. Runs the engine test suite.
-4. Builds the Windows NSIS installer.
-5. Publishes a GitHub Release for the tag.
-6. Attaches `SHA256SUMS.txt` for installer verification.
+1. Verifies the tag matches the version files.
+2. Runs the engine test suite.
+3. Builds the Windows NSIS installer and the Linux Debian package.
+4. Creates or updates the GitHub Release for the tag.
+5. Attaches every package and `SHA256SUMS.txt` for verification.
+
+The Linux package targets Ubuntu 24.04 and newer. A tag push is still the fastest path; publishing a GitHub Release or running the workflow manually rebuilds and attaches the missing platform assets.
 
 Keep the version in `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` in sync before tagging. Optional Tauri updater signing keys can be supplied as `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repository secrets; updater endpoints and public keys remain build-time configuration.
 

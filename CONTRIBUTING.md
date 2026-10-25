@@ -184,7 +184,9 @@ publication to receive deeper scrutiny.
 ## Releases
 
 Releases are built by [`.github/workflows/release.yml`](.github/workflows/release.yml)
-when a `v*` tag is pushed. Before tagging:
+when a `v*` tag is pushed, when a GitHub Release is published, or when the
+workflow is run manually with an existing tag. The workflow produces the Windows
+NSIS installer and the Linux Debian package. Before tagging:
 
 1. Update the version in `package.json`, `src-tauri/Cargo.toml`, and
    `src-tauri/tauri.conf.json`. The workflow rejects a tag that does not match
@@ -192,6 +194,7 @@ when a `v*` tag is pushed. Before tagging:
 2. Run the quality gates locally.
 3. Confirm the database schema migration is safe for the previous release.
 4. Push the tag, for example `git tag v0.1.0 && git push origin v0.1.0`.
+5. If a package must be added to an existing release, run the release workflow manually with that tag instead of creating a new version.
 
 Updater signing is optional until updater artifacts are enabled. When it is
 enabled, configure `TAURI_SIGNING_PRIVATE_KEY` and

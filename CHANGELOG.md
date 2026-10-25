@@ -18,6 +18,13 @@ All notable changes to OSDM are documented here. This project follows
 
 ## [Unreleased]
 
+### Changed
+
+- The release workflow now also runs when a GitHub Release is published and can
+  be dispatched manually for an existing tag.
+- Releases now include the Linux Debian package alongside the Windows installer,
+  with one `SHA256SUMS.txt` covering every downloadable asset.
+
 ### Planned
 
 - Dynamic bandwidth allocation with per-download priorities.

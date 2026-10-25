@@ -4,48 +4,91 @@ on:
   push:
     tags:
       - "v*"
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing version tag to release, for example v0.1.1-alpha.1"
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
+env:
+  RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
+  CARGO_TERM_COLOR: always
+
 jobs:
-  release:
-    name: Build and publish Windows installer
+  preflight:
+    name: Verify release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      tag: ${{ steps.verify.outputs.tag }}
+      prerelease: ${{ steps.verify.outputs.prerelease }}
+
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Verify tag and version files
+        id: verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(jq -r .version src-tauri/tauri.conf.json)
+          package_version=$(jq -r .version package.json)
+          cargo_version=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
+          engine_version=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/download-engine/Cargo.toml | head -1)
+          if [[ "$package_version" != "$version" || "$cargo_version" != "$version" || "$engine_version" != "$version" ]]; then
+            echo "Version mismatch: tauri.conf.json=$version package.json=$package_version src-tauri/Cargo.toml=$cargo_version crates/download-engine/Cargo.toml=$engine_version" >&2
+            exit 1
+          fi
+          if [[ "$RELEASE_TAG" != "v$version" ]]; then
+            echo "Tag $RELEASE_TAG does not match the application version v$version." >&2
+            exit 1
+          fi
+          prerelease=false
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            prerelease=true
+          fi
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "Releasing OSDM $RELEASE_TAG from $GITHUB_SHA"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run engine tests
+        run: cargo test --locked -p download-engine
+
+  windows:
+    name: Build Windows installer
+    needs: preflight
     runs-on: windows-latest
     timeout-minutes: 45
 
     steps:
-      - name: Check out the tagged commit
+      - name: Check out the release tag
         uses: actions/checkout@v4
         with:
+          ref: ${{ needs.preflight.outputs.tag }}
           fetch-depth: 0
-
-      - name: Verify tag and version files
-        shell: pwsh
-        run: |
-          $version = (Get-Content -Raw src-tauri/tauri.conf.json | ConvertFrom-Json).version
-          $packageVersion = (Get-Content -Raw package.json | ConvertFrom-Json).version
-          $cargoText = Get-Content -Raw src-tauri/Cargo.toml
-          if ($cargoText -notmatch '(?m)^version\s*=\s*"([^"]+)"') {
-            throw "Could not read the version from src-tauri/Cargo.toml."
-          }
-          $cargoVersion = $Matches[1]
-          $engineText = Get-Content -Raw crates/download-engine/Cargo.toml
-          if ($engineText -notmatch '(?m)^version\s*=\s*"([^"]+)"') {
-            throw "Could not read the version from crates/download-engine/Cargo.toml."
-          }
-          $engineVersion = $Matches[1]
-          if ($packageVersion -ne $version -or $cargoVersion -ne $version -or $engineVersion -ne $version) {
-            throw "Version mismatch: tauri.conf.json=$version package.json=$packageVersion src-tauri/Cargo.toml=$cargoVersion crates/download-engine/Cargo.toml=$engineVersion."
-          }
-          if ("v$version" -ne $env:GITHUB_REF_NAME) {
-            throw "Tag $env:GITHUB_REF_NAME does not match the application version v$version."
-          }
-          Write-Host "Releasing OSDM v$version from $env:GITHUB_SHA"
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -67,66 +110,121 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Check Rust formatting
-        run: cargo fmt --all -- --check
+      - name: Build Windows installer
+        run: pnpm tauri build --bundles nsis
 
-      - name: Run engine tests
-        run: cargo test -p download-engine
-
-      - name: Build frontend
-        run: pnpm build
-
-      - name: Build installer and publish release
-        id: tauri
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Only required once signed updater artifacts are enabled.
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "OSDM ${{ github.ref_name }}"
-          releaseBody: |
-            **OSDM __VERSION__** for Windows 10/11.
+          name: windows-nsis
+          path: target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 7
 
-            This release was built automatically from a version tag.
+  linux:
+    name: Build Linux package
+    needs: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
 
-            ### Highlights
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.tag }}
+          fetch-depth: 0
 
-            - Adaptive, recoverable segmented HTTP(S) downloads
-            - Automatic recovery from rate limits and interrupted connections
-            - Optional SHA-256 verification before publication
-            - Pause, resume, retry, and source-URL replacement
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
 
-            `SHA256SUMS.txt` is attached to this release for installer verification. OSDM is alpha software; keep backups of important files and review the documentation before upgrading.
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
 
-            **Full documentation:** https://github.com/${{ github.repository }}#readme
-          releaseDraft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          args: --bundles nsis
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
 
-      - name: Publish SHA-256 checksums
-        shell: pwsh
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Debian package
+        run: pnpm tauri build --bundles deb
+
+      - name: Upload Linux package
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-deb
+          path: target/release/bundle/deb/*.deb
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish release assets
+    needs: [preflight, windows, linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRERELEASE: ${{ needs.preflight.outputs.prerelease }}
+        shell: bash
         run: |
-          $roots = @(
-            "target/release/bundle/nsis",
-            "src-tauri/target/release/bundle/nsis"
-          )
-          $installers = @()
-          foreach ($root in $roots) {
-            if (Test-Path $root) {
-              $installers += Get-ChildItem "$root/*.exe"
-            }
-          }
-          if (-not $installers) {
-            throw "No NSIS installer was produced."
-          }
-          $lines = foreach ($installer in $installers) {
-            $hash = (Get-FileHash -Algorithm SHA256 $installer.FullName).Hash.ToLowerInvariant()
-            "$hash  $($installer.Name)"
-          }
-          $lines | Set-Content -Encoding ascii SHA256SUMS.txt
-          gh release upload $env:GITHUB_REF_NAME SHA256SUMS.txt --clobber
+          set -euo pipefail
+          cd release-assets
+          sha256sum * > SHA256SUMS.txt
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" * --clobber
+          else
+            cat > ../RELEASE_NOTES.md <<EOF
+          **OSDM $RELEASE_TAG** for Windows 10/11 and Linux.
+
+          Built automatically from $RELEASE_TAG.
+
+          ### Downloads
+
+          - Windows: NSIS installer
+          - Linux: Debian package for Ubuntu 24.04 and newer
+
+          SHA256SUMS.txt covers every downloadable asset.
+
+          OSDM is alpha software. Keep backups of important files and review the documentation before upgrading.
+
+          **Full documentation:** https://github.com/${{ github.repository }}#readme
+          EOF
+            args=(--title "OSDM $RELEASE_TAG" --notes-file ../RELEASE_NOTES.md)
+            if [[ "$PRERELEASE" == "true" ]]; then
+              args+=(--prerelease)
+            fi
+            gh release create "$RELEASE_TAG" * "${args[@]}"
+          fi

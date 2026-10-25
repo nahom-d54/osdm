@@ -77,8 +77,10 @@ Do not search or edit `target/`, `node_modules/`, `dist/`, or `src-tauri/gen/`.
 
 ## Release workflow
 
-The release workflow is `.github/workflows/release.yml` and runs on `v*` tags.
-Before tagging, keep these versions identical:
+The release workflow is `.github/workflows/release.yml` and runs on `v*` tags,
+published GitHub Releases, and manual dispatches with an existing tag. It builds
+the Windows NSIS installer and Linux Debian package. Before tagging, keep these
+versions identical:
 
 - `package.json`
 - `crates/download-engine/Cargo.toml`
@@ -93,9 +95,10 @@ git push origin master
 git push origin v0.1.0-alpha.1
 ```
 
-The workflow tests, builds the NSIS installer, publishes the GitHub Release, and
-uploads `SHA256SUMS.txt`. Updater signing keys remain optional until signed
-updater artifacts are enabled.
+The workflow tests, builds both packages, creates or updates the GitHub Release,
+and uploads `SHA256SUMS.txt`. Use a manual workflow dispatch with the existing
+tag to attach a platform package to an already-published release. Updater signing
+keys remain optional until signed updater artifacts are enabled.
 
 ## Source of truth
 
