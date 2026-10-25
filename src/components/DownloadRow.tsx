@@ -17,20 +17,24 @@ import {
 import type { Download } from "@/lib/types";
 import { downloadedBytes } from "@/lib/types";
 import { useEngine } from "@/store/engine";
+import { useSettings } from "@/store/settings";
 
 export function DownloadRow({
   download,
   index,
   selected,
+  tabStop,
 }: {
   download: Download;
   index: number;
   selected: boolean;
+  tabStop: boolean;
 }) {
-  const { setSelected, toggleDetails, pause, resume, retry, cancel, removeDownload, openFile, revealFile } =
+  const { setSelected, toggleDetails, pause, resume, retry, cancel, removeDownload, openFile, revealFile, checkedIds, setChecked } =
     useEngine();
 
   const bytes = downloadedBytes(download);
+  const columns = useSettings((state) => state.settings.visible_columns);
   const live = download.state === "Downloading";
   const percent = formatPercent(bytes, download.total_bytes);
   const sizeLabel =
@@ -56,7 +60,7 @@ export function DownloadRow({
   return (
     <li
       data-row={download.id}
-      tabIndex={index === 0 ? 0 : -1}
+      tabIndex={tabStop ? 0 : -1}
       aria-current={selected ? "true" : undefined}
       onKeyDown={onKey}
       onFocus={(event) => {
@@ -76,6 +80,7 @@ export function DownloadRow({
       )}
 
       <div className="flex items-center gap-3 px-4 py-3">
+        <input type="checkbox" aria-label={`Select ${fileNameOf(download.destination)}`} checked={checkedIds.includes(download.id)} onClick={(event) => event.stopPropagation()} onChange={(event) => setChecked(event.target.checked ? [...checkedIds, download.id] : checkedIds.filter((id) => id !== download.id))} />
         <FileBadge name={download.destination} />
 
         <div className="min-w-0 flex-1">
@@ -108,7 +113,7 @@ export function DownloadRow({
               <CircleAlert className="mt-px size-3 shrink-0" strokeWidth={1.75} aria-hidden="true" />
               <span>
                 {sentence(download.error)}{" "}
-                <span className="text-danger/70">
+                <span className="text-danger">
                   {bytes > 0
                     ? `${formatBytes(bytes)} is committed — retry to continue.`
                     : "Retry when the server is reachable."}
@@ -118,21 +123,21 @@ export function DownloadRow({
           )}
         </div>
 
-        <div className="w-[92px] shrink-0">
+        {columns.includes("state") && <div className="w-[92px] shrink-0">
           <StateChip state={download.state} />
-        </div>
+        </div>}
 
-        <div className="hidden w-[76px] shrink-0 text-right font-mono text-[10.5px] text-muted-foreground tnum @min-[760px]:block">
+        {columns.includes("rate") && <div className="hidden w-[76px] shrink-0 text-right font-mono text-[10.5px] text-muted-foreground tnum @min-[760px]:block">
           {live ? formatSpeed(download.bytes_per_second) : ""}
-        </div>
+        </div>}
 
-        <div className="hidden w-[62px] shrink-0 text-right font-mono text-[10.5px] text-faint tnum @min-[920px]:block">
+        {columns.includes("eta") && <div className="hidden w-[62px] shrink-0 text-right font-mono text-[10.5px] text-faint tnum @min-[920px]:block">
           {live ? formatEta(download.eta_seconds) : ""}
-        </div>
+        </div>}
 
-        <div className="w-[70px] shrink-0 text-right font-mono text-[10.5px] text-muted-foreground tnum">
+        {columns.includes("size") && <div className="w-[70px] shrink-0 text-right font-mono text-[10.5px] text-muted-foreground tnum">
           {sizeLabel}
-        </div>
+        </div>}
 
         <div
           onClick={(event) => event.stopPropagation()}

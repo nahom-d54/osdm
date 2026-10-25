@@ -61,9 +61,6 @@ export function SegmentRibbon({ download }: { download: Download }) {
           probing && flowing && "lane-indeterminate",
         )}
       >
-        {!flowing && downloaded > 0 ? (
-          <div className={cn("h-full rounded-[2px]", tone.fill)} style={{ width: "12%" }} />
-        ) : null}
       </div>
     );
   }

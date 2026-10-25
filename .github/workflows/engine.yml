@@ -37,6 +37,9 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      - run: pnpm test
+      - run: pnpm exec playwright install chromium
+      - run: pnpm test:ui
       - run: cargo clippy --locked -p osdm-desktop --all-targets -- -D warnings
       - run: cargo test --locked -p osdm-desktop
 

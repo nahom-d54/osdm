@@ -10,6 +10,9 @@ import { Separator } from "@/components/ui/separator";
 import { Toggle } from "@/components/ui/toggle";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { getBridge } from "@/lib/bridge";
+import { CategorySettings } from "@/components/CategorySettings";
+import { DesktopSettings } from "@/components/DesktopSettings";
+import { LayoutSettings } from "@/components/LayoutSettings";
 import type { ThemeChoice } from "@/store/settings";
 import { DEFAULT_SETTINGS, useSettings } from "@/store/settings";
 import { useEngine } from "@/store/engine";
@@ -33,7 +36,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
             variant="ghost"
             size="sm"
             onClick={() => {
-              update(DEFAULT_SETTINGS);
+              update({ ...DEFAULT_SETTINGS, onboarding_complete: settings.onboarding_complete });
               void applySpeedLimit(DEFAULT_SETTINGS.speed_limit_bytes_per_second);
             }}
           >
@@ -103,6 +106,12 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
           </div>
         </section>
 
+        <Field label="Remember last-used folder">
+          <Toggle pressed={settings.remember_last_directory} onPressedChange={(pressed) => update({ remember_last_directory: pressed })}>Remember folder</Toggle>
+        </Field>
+        <CategorySettings />
+        <DesktopSettings key={JSON.stringify([settings.desktop.scanner_executable, settings.desktop.sound_file, settings.desktop.scanner_arguments])} />
+        <LayoutSettings />
         <Separator />
 
         <section>

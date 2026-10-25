@@ -1,5 +1,5 @@
 import type { EngineBridge, EngineErrorListener, SnapshotListener } from "@/lib/bridge/types";
-import type { Download, DownloadRequest, EngineConfig, UrlProbe } from "@/lib/types";
+import type { Download, DownloadRequest, DownloadProperties, EngineConfig, UrlProbe } from "@/lib/types";
 import { suggestFilename } from "@/lib/format";
 import { useSettings } from "@/store/settings";
 import type { AppSettings } from "@/store/settings";
@@ -50,8 +50,26 @@ export class TauriBridge implements EngineBridge {
     this.stopSettings = null;
   }
 
-  async enqueue(request: DownloadRequest): Promise<string> {
-    return this.invoke<string>("engine_enqueue", { request });
+  async enqueue(request: DownloadRequest, startPaused = false, properties?: DownloadProperties, credentials?: import("@/lib/types").BasicCredentials): Promise<string> {
+    // Native admission reads working-storage preferences; never race a pending
+    // settings write and silently use the previous directory.
+    await this.settingsWrites;
+    return this.invoke<string>("engine_enqueue", { request, startPaused, properties, credentials });
+  }
+
+  async setCredentials(id: string, credentials: import("@/lib/types").BasicCredentials | null): Promise<void> {
+    await this.invoke("engine_set_credentials", { id, credentials });
+  }
+
+  async updateProperties(id: string, properties: DownloadProperties): Promise<void> {
+    await this.invoke("engine_update_properties", { id, properties });
+  }
+
+  async testSound(path: string): Promise<void> { await this.invoke("test_sound", { path }); }
+  async dragCompleted(id: string): Promise<void> { await this.invoke("drag_completed", { id }); }
+
+  async updateDestination(id: string, destination: string): Promise<void> {
+    await this.invoke("engine_update_destination", { id, destination });
   }
 
   async probe(url: string): Promise<UrlProbe> {

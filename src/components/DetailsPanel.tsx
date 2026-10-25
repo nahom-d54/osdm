@@ -17,6 +17,8 @@ import {
 import { cn } from "cn";
 
 import { FileBadge } from "@/components/FileBadge";
+import { DownloadPropertiesEditor } from "@/components/DownloadPropertiesEditor";
+import { getBridge } from "@/lib/bridge";
 import { SegmentLanes } from "@/components/SegmentRibbon";
 import { StateChip } from "@/components/StateChip";
 import { Button } from "@/components/ui/button";
@@ -272,6 +274,7 @@ export function DetailsPanel({ download }: { download: Download | null }) {
           </dl>
         </section>
 
+        <DownloadPropertiesEditor key={download.id} download={download} />
         <section className="border-b border-line-soft px-4 py-4">
           <h3 className="eyebrow mb-2">Manifest</h3>
           <dl className="divide-y divide-line-soft">
@@ -284,6 +287,9 @@ export function DetailsPanel({ download }: { download: Download | null }) {
               muted={!download.validator}
             />
           </dl>
+          {completed && <Button size="sm" variant="secondary" className="mt-3" onPointerDown={(event) => {
+            if (event.button === 0) void getBridge().dragCompleted(download.id).catch((error) => useEngine.setState({ banner: String(error) }));
+          }}>Drag file out</Button>}
           {(download.state === "Paused" || download.state === "Failed") && (
             <ChangeUrl key={download.id} download={download} />
           )}

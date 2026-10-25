@@ -12,9 +12,11 @@ import { useMediaQuery } from "@/lib/use-media";
 import { NAV_GROUPS, VIEW_COPY, matchesView } from "@/lib/views";
 import type { ViewFilter } from "@/store/engine";
 import { useEngine } from "@/store/engine";
+import { useSettings } from "@/store/settings";
 
 const VIEW_ICONS: Record<ViewFilter, LucideIcon> = {
   all: Layers,
+  unfinished: Clock,
   active: Activity,
   queued: Clock,
   completed: CircleCheck,
@@ -23,7 +25,8 @@ const VIEW_ICONS: Record<ViewFilter, LucideIcon> = {
 };
 
 export function Sidebar({ onSettings }: { onSettings: () => void }) {
-  const { view, setView, downloads } = useEngine();
+  const { view, setView, downloads, categoryFilter, setCategoryFilter } = useEngine();
+  const categories = useSettings((state) => state.settings.categories);
   const compact = useMediaQuery("(max-width: 1023px)");
 
   const active = downloads.filter((download) => download.state === "Downloading").length;
@@ -101,7 +104,7 @@ export function Sidebar({ onSettings }: { onSettings: () => void }) {
             <h2 className="eyebrow px-2 pb-1.5 max-[1023px]:hidden">{group.heading}</h2>
             <div className="flex flex-col gap-0.5">
               {group.views.map((target) => {
-                const selected = view === target;
+                const selected = view === target && categoryFilter == null;
                 const count = countFor(target);
                 const trigger = (
                   <button
@@ -143,6 +146,13 @@ export function Sidebar({ onSettings }: { onSettings: () => void }) {
             </div>
           </section>
         ))}
+        <section aria-label="Categories" className="mb-4">
+          <h2 className="eyebrow px-2 pb-1.5 max-[1023px]:hidden">Categories</h2>
+          {[{ id: "", name: "General" }, ...categories, ...[...new Set(downloads.map((download) => download.properties?.category_id).filter((id): id is string => !!id && !categories.some((category) => category.id === id)))].map((id) => ({ id, name: "Deleted category" }))].map((category) => <button key={category.id} type="button" title={category.name} aria-label={`Category: ${category.name}`} aria-current={categoryFilter === category.id ? "page" : undefined} onClick={() => setCategoryFilter(category.id)} className={cn("flex min-h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs", categoryFilter === category.id ? "bg-brand-soft text-brand" : "text-muted-foreground hover:bg-raise")}>
+            <span aria-hidden="true">#</span><span className="truncate max-[1023px]:hidden">{category.name}</span>
+            <span className="ml-auto max-[1023px]:hidden">{downloads.filter((download) => (download.properties?.category_id ?? "") === category.id).length}</span>
+          </button>)}
+        </section>
       </div>
 
       <div className="shrink-0 border-t border-line-soft p-2.5">
@@ -157,8 +167,8 @@ export function Sidebar({ onSettings }: { onSettings: () => void }) {
             <span className="max-[1023px]:hidden">Settings</span>
           </button>
         </Hint>
-        <div className="mt-1 px-2 font-mono text-[8.5px] uppercase tracking-[0.1em] text-faint/80 max-[1023px]:hidden">
-          0.1.0-alpha · local
+        <div className="mt-1 px-2 font-mono text-[8.5px] uppercase tracking-[0.1em] text-faint max-[1023px]:hidden">
+          OSDM · local
         </div>
       </div>
     </nav>

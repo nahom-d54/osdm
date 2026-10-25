@@ -37,6 +37,7 @@ enum Mode {
 struct ServerState {
     mode: Mode,
     content: Mutex<(Vec<u8>, String)>,
+    last_modified: Mutex<String>,
     ranges: Mutex<Vec<String>>,
     requests: AtomicUsize,
     active: AtomicUsize,
@@ -70,6 +71,7 @@ async fn server(mode: Mode) -> Server {
             (0..2 * 1024 * 1024).map(|i| (i % 251) as u8).collect(),
             "\"v1\"".into(),
         )),
+        last_modified: Mutex::new("Wed, 21 Oct 2015 07:28:00 GMT".into()),
         ranges: Mutex::new(vec![]),
         requests: AtomicUsize::new(0),
         active: AtomicUsize::new(0),
@@ -284,7 +286,10 @@ async fn handler(State(state): State<Arc<ServerState>>, headers: HeaderMap) -> R
         && range.as_deref() == Some("bytes=0-0"));
     let mut response = Response::builder();
     if state.mode != Mode::NoValidator {
-        response = response.header("etag", &etag);
+        response = response.header("etag", &etag).header(
+            "last-modified",
+            state.last_modified.lock().unwrap().as_str(),
+        );
     }
     let bytes = if let Some(range) = range.filter(|_| honor) {
         let (start, end) = range
@@ -366,6 +371,42 @@ fn config() -> Config {
     }
 }
 
+#[tokio::test]
+async fn deferred_enqueue_never_starts_until_resumed_even_after_reopen() {
+    let server = server(Mode::Ranges).await;
+    let dir = TempDir::new().unwrap();
+    let database = dir.path().join("downloads.db");
+    let destination = dir.path().join("later.bin");
+    let request = || DownloadRequest {
+        url: server.url.clone(),
+        destination: destination.clone(),
+        expected_sha256: None,
+    };
+    let engine = Engine::open(&database, config()).await.unwrap();
+    let id = engine.enqueue_paused(request()).await.unwrap();
+    assert!(engine.enqueue_paused(request()).await.is_err());
+    tokio::time::sleep(Duration::from_millis(350)).await;
+    let download = engine.snapshot().await.remove(0);
+    assert_eq!(download.state, DownloadState::Paused);
+    assert!(!download.temporary_path.exists());
+    assert_eq!(server.state.requests.load(Ordering::SeqCst), 0);
+    engine.shutdown().await.unwrap();
+    let engine = Engine::open(&database, config()).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(350)).await;
+    assert_eq!(engine.snapshot().await[0].state, DownloadState::Paused);
+    assert_eq!(server.state.requests.load(Ordering::SeqCst), 0);
+    engine.resume(id).await.unwrap();
+    wait(&engine, id, |download| {
+        download.state == DownloadState::Completed
+    })
+    .await;
+    assert_eq!(
+        tokio::fs::read(destination).await.unwrap(),
+        server.state.content.lock().unwrap().0
+    );
+    engine.shutdown().await.unwrap();
+}
+
 async fn add(
     engine: &Engine,
     server: &Server,
@@ -380,6 +421,131 @@ async fn add(
         })
         .await
         .unwrap()
+}
+
+#[tokio::test]
+async fn custom_working_directory_publishes_via_same_directory_link_and_cleans_owned_names() {
+    let server = server(Mode::Ranges).await;
+    let dir = TempDir::new().unwrap();
+    let work = dir.path().join("working");
+    tokio::fs::create_dir(&work).await.unwrap();
+    let engine = Engine::open(dir.path().join("downloads.db"), config())
+        .await
+        .unwrap();
+    let id = engine
+        .enqueue_with_properties(
+            DownloadRequest {
+                url: server.url.clone(),
+                destination: dir.path().join("custom.bin"),
+                expected_sha256: None,
+            },
+            download_engine::DownloadProperties::default(),
+            false,
+            None,
+            Some(work.clone()),
+        )
+        .await
+        .unwrap();
+    let download = wait(&engine, id, |download| {
+        download.state == DownloadState::Completed
+    })
+    .await;
+    assert_eq!(
+        download.temporary_path.parent().unwrap(),
+        std::fs::canonicalize(&work).unwrap()
+    );
+    assert!(!download.temporary_path.exists());
+    assert!(!dir.path().join(format!(".osdm-{id}.publish.part")).exists());
+    assert_eq!(
+        tokio::fs::read(&download.destination).await.unwrap(),
+        server.state.content.lock().unwrap().0
+    );
+    engine.remove_download(id, true).await.unwrap();
+    assert!(download.destination.exists());
+    engine.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn custom_working_directory_recovery_and_cleanup_preserve_published_file() {
+    let dir = TempDir::new().unwrap();
+    let work = dir.path().join("working");
+    tokio::fs::create_dir(&work).await.unwrap();
+    let db = dir.path().join("downloads.db");
+    let engine = Engine::open(&db, config()).await.unwrap();
+    let id = engine
+        .enqueue_with_properties(
+            DownloadRequest {
+                url: "http://127.0.0.1:9/file".into(),
+                destination: dir.path().join("custom.bin"),
+                expected_sha256: None,
+            },
+            download_engine::DownloadProperties::default(),
+            true,
+            None,
+            Some(work.clone()),
+        )
+        .await
+        .unwrap();
+    let download = engine.snapshot().await.remove(0);
+    tokio::fs::write(&download.temporary_path, b"retained")
+        .await
+        .unwrap();
+    let staging = dir.path().join(format!(".osdm-{id}.publish.part"));
+    tokio::fs::hard_link(&download.temporary_path, &staging)
+        .await
+        .unwrap();
+    tokio::fs::hard_link(&staging, &download.destination)
+        .await
+        .unwrap();
+    engine.cancel(id).await.unwrap();
+    engine.remove_download(id, false).await.unwrap();
+    engine.shutdown().await.unwrap();
+    let engine = Engine::open(&db, config()).await.unwrap();
+    assert_eq!(engine.cleanup_partial_data().await.unwrap(), 2);
+    assert_eq!(engine.cleanup_partial_data().await.unwrap(), 0);
+    assert_eq!(
+        tokio::fs::read(download.destination).await.unwrap(),
+        b"retained"
+    );
+    engine.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn custom_storage_never_deletes_a_foreign_staging_collision() {
+    let dir = TempDir::new().unwrap();
+    let work = dir.path().join("working");
+    tokio::fs::create_dir(&work).await.unwrap();
+    let engine = Engine::open(dir.path().join("downloads.db"), config())
+        .await
+        .unwrap();
+    let id = engine
+        .enqueue_with_properties(
+            DownloadRequest {
+                url: "http://127.0.0.1:9/file".into(),
+                destination: dir.path().join("custom.bin"),
+                expected_sha256: None,
+            },
+            download_engine::DownloadProperties::default(),
+            true,
+            None,
+            Some(work),
+        )
+        .await
+        .unwrap();
+    let download = engine.snapshot().await.remove(0);
+    tokio::fs::write(&download.temporary_path, b"owned bytes")
+        .await
+        .unwrap();
+    let staging = dir.path().join(format!(".osdm-{id}.publish.part"));
+    tokio::fs::write(&staging, b"foreign bytes").await.unwrap();
+    engine.cancel(id).await.unwrap();
+    assert!(engine.remove_download(id, true).await.is_err());
+    assert_eq!(tokio::fs::read(staging).await.unwrap(), b"foreign bytes");
+    assert_eq!(
+        tokio::fs::read(download.temporary_path).await.unwrap(),
+        b"owned bytes"
+    );
+    engine.shutdown().await.unwrap();
 }
 
 async fn wait(
@@ -513,6 +679,9 @@ async fn pause_reopen_and_resume_preserves_durable_ranges() {
         paused.downloaded_bytes()
     );
     server.state.ranges.lock().unwrap().clear();
+    // Eligible date override is automatic: an unchanged strong ETag is the
+    // validator, so an unrelated Last-Modified change must not discard bytes.
+    *server.state.last_modified.lock().unwrap() = "Thu, 22 Oct 2015 07:28:00 GMT".into();
     engine.resume(id).await.unwrap();
     verify(&engine, &server, id).await;
     let requests = server.state.ranges.lock().unwrap().clone();
@@ -1485,21 +1654,21 @@ async fn schema_initializes_and_rejects_newer_or_corrupt_databases() {
     let engine = Engine::open(&fresh, config()).await.unwrap();
     engine.shutdown().await.unwrap();
     drop(engine);
-    assert_eq!(database_version(&fresh).await, 3);
+    assert_eq!(database_version(&fresh).await, 4);
 
     let unversioned = dir.path().join("unversioned.db");
     create_database(&unversioned, 0, None).await;
     let engine = Engine::open(&unversioned, config()).await.unwrap();
     engine.shutdown().await.unwrap();
     drop(engine);
-    assert_eq!(database_version(&unversioned).await, 3);
+    assert_eq!(database_version(&unversioned).await, 4);
 
     let revision_two = dir.path().join("revision-two.db");
     create_database(&revision_two, 2, None).await;
     let engine = Engine::open(&revision_two, config()).await.unwrap();
     engine.shutdown().await.unwrap();
     drop(engine);
-    assert_eq!(database_version(&revision_two).await, 3);
+    assert_eq!(database_version(&revision_two).await, 4);
 
     let legacy = dir.path().join("legacy-download.db");
     let payload = serde_json::json!({
@@ -1527,12 +1696,16 @@ async fn schema_initializes_and_rejects_newer_or_corrupt_databases() {
         download_engine::IntegrityStatus::Unverified
     );
     assert!(migrated.adaptive.is_none());
+    assert_eq!(
+        migrated.properties,
+        download_engine::DownloadProperties::default()
+    );
     engine.shutdown().await.unwrap();
     drop(engine);
-    assert_eq!(database_version(&legacy).await, 3);
+    assert_eq!(database_version(&legacy).await, 4);
 
     let newer = dir.path().join("newer.db");
-    create_database(&newer, 4, None).await;
+    create_database(&newer, 5, None).await;
     let error = match Engine::open(&newer, config()).await {
         Ok(_) => panic!("newer schema was accepted"),
         Err(error) => error,

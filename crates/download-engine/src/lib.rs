@@ -5,6 +5,7 @@ mod engine;
 mod integrity;
 mod model;
 mod retry;
+mod storage;
 mod store;
 #[cfg(debug_assertions)]
 #[doc(hidden)]

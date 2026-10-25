@@ -1,8 +1,10 @@
+mod completion;
 mod settings;
 mod updates;
 
 use download_engine::{
-    Config, Download, DownloadId, DownloadRequest, DownloadState, Engine, EngineEvent, ProbeInfo,
+    BasicCredentials, Config, Download, DownloadId, DownloadProperties, DownloadRequest,
+    DownloadState, Engine, EngineEvent, ProbeInfo,
 };
 use settings::{Settings, SettingsStore};
 use std::{
@@ -96,6 +98,7 @@ async fn engine_open<R: tauri::Runtime>(
     let source = engine.clone();
     let events = tauri::async_runtime::spawn(async move {
         let mut previous = String::new();
+        let mut actions = tokio::task::JoinSet::new();
         loop {
             let downloads = match events.recv().await {
                 Ok(EngineEvent::Snapshot(downloads)) => downloads,
@@ -107,24 +110,55 @@ async fn engine_open<R: tauri::Runtime>(
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             };
             for download in &downloads {
+                while actions.try_join_next().is_some() {}
                 if download.state == DownloadState::Completed && completed.insert(download.id) {
                     let name = download
                         .destination
                         .file_name()
                         .unwrap_or_default()
                         .to_string_lossy();
-                    if let Err(error) = app
-                        .notification()
-                        .builder()
-                        .title("Download completed")
-                        .body(name)
-                        .show()
+                    let preferences = app
+                        .state::<Shell>()
+                        .settings
+                        .load()
+                        .await
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default()
+                        .desktop;
+                    if !preferences.silent
+                        && let Err(error) = app
+                            .notification()
+                            .builder()
+                            .title("Download completed")
+                            .body(name)
+                            .show()
                     {
                         let _ = app.emit(
                             "engine://error",
                             format!("completion notification failed: {error}"),
                         );
                     }
+                    // Bounded native action tasks do not stall snapshot delivery.
+                    let handle = app.clone();
+                    let file = download.destination.clone();
+                    if actions.len() >= 8 {
+                        let _ = app.emit("engine://error", "Completion action could not run: eight scanner/sound actions are already active. The completed file is kept; scan it manually.");
+                        continue;
+                    }
+                    actions.spawn(async move {
+                        if let Err(error) = completion::scan(&preferences, &file).await {
+                            let _ = handle.emit("engine://error", error);
+                        }
+                        if !preferences.silent
+                            && !preferences.sound_file.is_empty()
+                            && let Err(error) =
+                                completion::sound(std::path::Path::new(&preferences.sound_file))
+                                    .await
+                        {
+                            let _ = handle.emit("engine://error", error);
+                        }
+                    });
                 }
             }
             if let Ok(serialized) = serde_json::to_string(&downloads)
@@ -145,13 +179,27 @@ async fn engine_shutdown(shell: State<'_, Shell>) -> Reply<()> {
 }
 
 #[tauri::command]
-async fn engine_enqueue(shell: State<'_, Shell>, request: DownloadRequest) -> Reply<DownloadId> {
-    shell
-        .engine()
-        .await?
-        .enqueue(request)
-        .await
-        .map_err(|e| e.to_string())
+async fn engine_enqueue(
+    shell: State<'_, Shell>,
+    request: DownloadRequest,
+    start_paused: Option<bool>,
+    properties: Option<DownloadProperties>,
+    credentials: Option<BasicCredentials>,
+) -> Reply<DownloadId> {
+    let engine = shell.engine().await?;
+    let settings = shell.settings.load().await?.unwrap_or_default();
+    let temporary_directory = (!settings.temporary_directory.is_empty())
+        .then(|| PathBuf::from(settings.temporary_directory));
+    let result = engine
+        .enqueue_with_properties(
+            request,
+            properties.unwrap_or_default(),
+            start_paused.unwrap_or(false),
+            credentials,
+            temporary_directory,
+        )
+        .await;
+    result.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -160,6 +208,48 @@ async fn engine_probe(shell: State<'_, Shell>, url: String) -> Reply<ProbeInfo> 
         .engine()
         .await?
         .probe(&url)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn engine_update_properties(
+    shell: State<'_, Shell>,
+    id: DownloadId,
+    properties: DownloadProperties,
+) -> Reply<()> {
+    shell
+        .engine()
+        .await?
+        .update_properties(id, properties)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn engine_update_destination(
+    shell: State<'_, Shell>,
+    id: DownloadId,
+    destination: PathBuf,
+) -> Reply<()> {
+    shell
+        .engine()
+        .await?
+        .update_destination(id, destination)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn engine_set_credentials(
+    shell: State<'_, Shell>,
+    id: DownloadId,
+    credentials: Option<BasicCredentials>,
+) -> Reply<()> {
+    shell
+        .engine()
+        .await?
+        .set_credentials(id, credentials)
         .await
         .map_err(|e| e.to_string())
 }
@@ -313,6 +403,66 @@ async fn path_exists(path: String) -> Reply<bool> {
 }
 
 #[tauri::command]
+async fn test_sound(path: String) -> Reply<()> {
+    completion::sound(&absolute_path(path)?).await
+}
+
+#[tauri::command]
+async fn drag_completed(
+    window: tauri::WebviewWindow,
+    shell: State<'_, Shell>,
+    id: DownloadId,
+) -> Reply<()> {
+    let download = shell
+        .engine()
+        .await?
+        .snapshot()
+        .await
+        .into_iter()
+        .find(|download| download.id == id && download.state == DownloadState::Completed)
+        .ok_or("only a completed download can be dragged out")?;
+    let path = tokio::fs::canonicalize(download.destination)
+        .await
+        .map_err(|_| "completed file is unavailable")?;
+    if !path.is_file() {
+        return Err("completed file is not a regular file".into());
+    }
+    let native_window = window.clone();
+    let (send, receive) = tokio::sync::oneshot::channel();
+    window
+        .run_on_main_thread(move || {
+            #[cfg(target_os = "linux")]
+            let result = native_window
+                .gtk_window()
+                .map_err(|error| error.to_string())
+                .and_then(|window| {
+                    drag::start_drag(
+                        &window,
+                        drag::DragItem::Files(vec![path]),
+                        drag::Image::Raw(include_bytes!("../icons/32x32.png").to_vec()),
+                        |_, _| {},
+                        drag::Options::default(),
+                    )
+                    .map_err(|error| error.to_string())
+                });
+            #[cfg(not(target_os = "linux"))]
+            let result = drag::start_drag(
+                &native_window,
+                drag::DragItem::Files(vec![path]),
+                drag::Image::Raw(include_bytes!("../icons/32x32.png").to_vec()),
+                |_, _| {},
+                drag::Options::default(),
+            )
+            .map_err(|error| error.to_string());
+            let _ = send.send(result);
+        })
+        .map_err(|error| error.to_string())?;
+    receive
+        .await
+        .map_err(|_| "drag operation ended unexpectedly")?
+}
+
+#[tauri::command]
 async fn open_path(app: AppHandle, path: String) -> Reply<()> {
     let path = tokio::fs::canonicalize(absolute_path(path)?)
         .await
@@ -382,6 +532,11 @@ pub fn run() {
             engine_open,
             engine_shutdown,
             engine_enqueue,
+            test_sound,
+            drag_completed,
+            engine_update_properties,
+            engine_set_credentials,
+            engine_update_destination,
             engine_probe,
             engine_pause,
             engine_resume,
@@ -510,6 +665,9 @@ mod tests {
             .invoke_handler(tauri::generate_handler![
                 engine_open,
                 engine_enqueue,
+                engine_update_properties,
+                engine_set_credentials,
+                engine_update_destination,
                 engine_probe,
                 engine_cancel,
                 engine_set_speed_limit,
@@ -570,6 +728,32 @@ mod tests {
         .unwrap();
         invoke("engine_reorder", json!({"ids":[]})).unwrap();
         assert_eq!(invoke("engine_cleanup_partial_data", json!({})).unwrap(), 0);
+        let deferred = invoke("engine_enqueue", json!({"request":{"url":"http://127.0.0.1:9/file","destination":dir.path().join("deferred.bin")},"startPaused":true})).unwrap();
+        assert_eq!(
+            invoke("engine_snapshot", json!({})).unwrap()[0]["state"],
+            "Paused"
+        );
+        invoke("engine_update_properties", json!({"id":deferred,"properties":{"description":"Saved through IPC","category_id":"documents"}})).unwrap();
+        invoke(
+            "engine_update_destination",
+            json!({"id":deferred,"destination":dir.path().join("renamed.bin")}),
+        )
+        .unwrap();
+        invoke(
+            "engine_set_credentials",
+            json!({"id":deferred,"credentials":{"username":"test","password":"session-only"}}),
+        )
+        .unwrap();
+        let updated = invoke("engine_snapshot", json!({})).unwrap();
+        assert_eq!(updated[0]["properties"]["description"], "Saved through IPC");
+        assert_eq!(updated[0]["properties"]["category_id"], "documents");
+        assert!(!updated.to_string().contains("session-only"));
+        invoke("engine_cancel", json!({"id":deferred})).unwrap();
+        invoke(
+            "engine_remove_download",
+            json!({"id":deferred,"removePartialFile":false}),
+        )
+        .unwrap();
         invoke("engine_shutdown", json!({})).unwrap();
         invoke("engine_shutdown", json!({})).unwrap();
         assert!(invoke("engine_enqueue", json!({"request":{"url":"http://127.0.0.1:9/file","destination":dir.path().join("late.bin")}})).is_err());

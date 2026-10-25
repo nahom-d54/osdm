@@ -3,23 +3,26 @@ import type { Download, EngineConfig } from "@/lib/types";
 import { ACTIVE_STATES } from "@/lib/types";
 import type { EngineBridge } from "@/lib/bridge/types";
 import { getBridge } from "@/lib/bridge";
+import { runBulk } from "@/lib/bulk";
 import { useSettings } from "@/store/settings";
 import type { AppSettings } from "@/store/settings";
 
-export type ViewFilter = "all" | "active" | "queued" | "completed" | "failed" | "history";
+export type ViewFilter = "all" | "unfinished" | "active" | "queued" | "completed" | "failed" | "history";
 
 export interface EngineStore {
   ready: boolean;
   downloads: Download[];
   view: ViewFilter;
   query: string;
+  categoryFilter: string | null;
   selectedId: string | null;
+  checkedIds: string[];
   detailsOpen: boolean;
   banner: string | null;
   engineError: string | null;
 
   init(): Promise<void>;
-  enqueue(url: string, destination: string, expectedSha256?: string): Promise<void>;
+  enqueue(url: string, destination: string, expectedSha256?: string, startPaused?: boolean, properties?: import("@/lib/types").DownloadProperties, credentials?: import("@/lib/types").BasicCredentials): Promise<void>;
   pause(id: string): Promise<void>;
   resume(id: string): Promise<void>;
   retry(id: string): Promise<void>;
@@ -32,10 +35,14 @@ export interface EngineStore {
   pauseAll(): Promise<void>;
   resumeAll(): Promise<void>;
   stopAll(): Promise<void>;
+  removeCompleted(): Promise<void>;
+  removeChecked(removePartialFile: boolean): Promise<void>;
+  setChecked(ids: string[]): void;
   applySpeedLimit(bytesPerSecond: number): Promise<void>;
 
   setView(view: ViewFilter): void;
   setQuery(query: string): void;
+  setCategoryFilter(category: string | null): void;
   setSelected(id: string | null): void;
   toggleDetails(): void;
   clearBanner(): void;
@@ -65,6 +72,8 @@ export const useEngine = create<EngineStore>((set, get) => {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       set({ banner: message });
+      // Bulk commands can partially succeed; always reconcile authoritative state.
+      try { set({ downloads: await b.snapshot() }); } catch { /* retain last snapshot */ }
     }
   };
 
@@ -73,7 +82,9 @@ export const useEngine = create<EngineStore>((set, get) => {
     downloads: [],
     view: "all",
     query: "",
+    categoryFilter: null,
     selectedId: null,
+    checkedIds: [],
     detailsOpen: false,
     banner: null,
     engineError: null,
@@ -97,12 +108,15 @@ export const useEngine = create<EngineStore>((set, get) => {
       await initializing;
     },
 
-    async enqueue(url, destination, expectedSha256) {
+    async enqueue(url, destination, expectedSha256, startPaused = false, properties, credentials) {
       // Let the add flow show engine rejections in its own surface instead of
       // closing optimistically and only raising a background banner.
       const b = getBridge();
-      await b.enqueue({ url, destination, expected_sha256: expectedSha256 || null });
-      set({ downloads: await b.snapshot() });
+      await b.enqueue({ url, destination, expected_sha256: expectedSha256 || null }, startPaused, properties, credentials);
+      // Admission is already durable. A refresh failure must not invite a retry
+      // that queues the same user intent twice.
+      try { set({ downloads: await b.snapshot() }); }
+      catch { set({ banner: "Download saved, but the list could not be refreshed. Wait for the next engine snapshot." }); }
     },
 
     pause: (id) => runCommand((b) => b.pause(id)),
@@ -168,9 +182,20 @@ export const useEngine = create<EngineStore>((set, get) => {
       return runCommandWithAll(downloads.filter((d) => ACTIVE_STATES.includes(d.state)).map((d) => d.id), (b, id) => b.cancel(id));
     },
 
+    removeCompleted: () => runCommandWithAll(
+      get().downloads.filter((download) => download.state === "Completed").map((download) => download.id),
+      (b, id) => b.removeDownload(id, false),
+    ),
+    removeChecked: async (removePartialFile) => {
+      await runCommandWithAll(get().checkedIds, (b, id) => b.removeDownload(id, removePartialFile));
+      set({ checkedIds: get().checkedIds.filter((id) => get().downloads.some((download) => download.id === id)) });
+    },
+    setChecked: (checkedIds) => set({ checkedIds }),
+
     applySpeedLimit: (bytesPerSecond) => runCommand((b) => b.setSpeedLimit(bytesPerSecond)),
 
-    setView: (view) => set({ view }),
+    setView: (view) => set({ view, categoryFilter: null }),
+    setCategoryFilter: (categoryFilter) => set({ categoryFilter, view: "all", selectedId: null }),
     setQuery: (query) => set({ query }),
     setSelected: (selectedId) => set({ selectedId, detailsOpen: selectedId != null }),
     toggleDetails: () => set((s) => ({ detailsOpen: !s.detailsOpen })),
@@ -179,7 +204,7 @@ export const useEngine = create<EngineStore>((set, get) => {
 
   async function runCommandWithAll(ids: string[], action: (b: EngineBridge, id: string) => Promise<unknown>): Promise<void> {
     await runCommand(async (b) => {
-      await Promise.all(ids.map((id) => action(b, id).catch(() => {})));
+      await runBulk(ids, (id) => action(b, id));
     });
   }
 });

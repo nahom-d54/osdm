@@ -9,6 +9,10 @@ export interface ViewCopy {
 }
 
 export const VIEW_COPY: Record<ViewFilter, ViewCopy> = {
+  unfinished: {
+    label: "Unfinished", title: "Unfinished", emptyTitle: "No unfinished downloads",
+    emptyBody: "Queued, running, paused, failed, and stopped downloads appear here until they finish or you remove their entries.",
+  },
   all: {
     label: "All downloads",
     title: "All downloads",
@@ -54,7 +58,7 @@ export const VIEW_COPY: Record<ViewFilter, ViewCopy> = {
 };
 
 export const NAV_GROUPS: Array<{ heading: string; views: ViewFilter[] }> = [
-  { heading: "Transfers", views: ["all", "active", "queued"] },
+  { heading: "Transfers", views: ["all", "unfinished", "active", "queued"] },
   { heading: "Archive", views: ["completed", "failed", "history"] },
 ];
 
@@ -62,6 +66,8 @@ const ACTIVE: Download["state"][] = ["Downloading", "Pausing"];
 
 export function matchesView(view: ViewFilter, download: Download): boolean {
   switch (view) {
+    case "unfinished":
+      return download.state !== "Completed";
     case "all":
       return true;
     case "active":
@@ -87,5 +93,6 @@ export function matchesQuery(download: Download, query: string): boolean {
   return (
     download.url.toLowerCase().includes(needle) ||
     download.destination.toLowerCase().includes(needle)
+    || (download.properties?.description ?? "").toLowerCase().includes(needle)
   );
 }

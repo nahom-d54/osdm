@@ -29,7 +29,9 @@ export interface Download {
   id: DownloadId;
   url: string;
   destination: string;
+  properties?: DownloadProperties;
   temporary_path: string;
+  temporary_directory?: string | null;
   state: DownloadState;
   total_bytes: number | null;
   segments: Segment[];
@@ -70,6 +72,15 @@ export interface DownloadRequest {
   destination: string;
   expected_sha256?: string | null;
 }
+
+/** Durable non-secret organization metadata. */
+export interface DownloadProperties {
+  description: string;
+  category_id: string | null;
+}
+
+/** Input only, session-only. Never store this in Zustand persistence. */
+export interface BasicCredentials { username: string; password: string }
 
 /** Metadata returned by a pre-download probe; no queue entry is created. */
 export interface UrlProbe {

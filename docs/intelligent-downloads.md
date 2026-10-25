@@ -26,7 +26,8 @@ and the controller's decision. Durable segments are separate from live connectio
 Checksums are optional because many publishers provide no reference. A computed
 SHA-256 alone is **not** proof of integrity or authenticity. Existing downloads
 without a reference remain usable, and old history is not marked verified.
-Database revision 3 prevents older engines from ignoring checksum requirements.
+Database revision 3 introduced downgrade protection for checksum requirements;
+current revision 4 also protects metadata and temporary-storage ownership.
 
 ### Acceptance gate
 
@@ -55,6 +56,14 @@ then mirror admission/ranking. Mirror requests must participate in all existing
 connection, storage, integrity, and bandwidth budgets.
 
 ## Phase 3 — automation
+
+Delivery order: finish the standalone P1 release gate in `PLAN.md`, then browser
+capture and batch/CLI. Scheduling depends on the batch/CLI persistence and
+automation contract. Category destination suggestions are available in the add
+dialog, with durable category assignments and category navigation; these do not
+constitute intelligent organization or scheduling. Localization is excluded from
+the current P1 implementation at the user's request. See `p1-validation.md` for
+implemented daily-use workflows and outstanding interactive release checks.
 
 Planned, not implemented in phase 1.
 

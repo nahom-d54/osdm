@@ -21,7 +21,7 @@ impl Store {
         let version: i64 = sqlx::query_scalar("PRAGMA user_version")
             .fetch_one(&pool)
             .await?;
-        if !(0..=3).contains(&version) {
+        if !(0..=4).contains(&version) {
             return Err(crate::Error::Invalid(
                 "database was created by a newer engine version".into(),
             ));
@@ -31,9 +31,8 @@ impl Store {
             .execute(&mut *tx).await?;
         sqlx::query("CREATE TABLE IF NOT EXISTS orphaned_partials (id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
             .execute(&mut *tx).await?;
-        // Revision 3 protects integrity requirements from older engines that
-        // would silently ignore expected_sha256 and publish unchecked bytes.
-        sqlx::query("PRAGMA user_version = 3")
+        // Older engines must not discard organization metadata when saving.
+        sqlx::query("PRAGMA user_version = 4")
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;

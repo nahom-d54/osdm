@@ -716,9 +716,19 @@ The repository contains the headless engine, its P0 hardening tests, and a Tauri
 desktop shell wired to the existing React UI through the bridge contract in
 `docs/bridge-contract.md`. The shell owns engine lifecycle, tray behavior,
 native dialogs, completion notifications, persistent settings, and
-configuration-gated signed updates. Category routing and the installer/upgrade
-validation remain P1 release work; P1–P4 features beyond the shell are not
-implemented.
+configuration-gated signed updates. Category destination suggestions and editable
+extension/domain rules are implemented, with persistence and routing regressions.
+The P1 daily-use implementation also includes per-download category/description
+metadata and navigation, stopped destination edits, session-only Basic credentials,
+same-volume temporary storage, multi-select deletion, unfinished grouping,
+completion/progress/minimized dialogs, silent/immediate-start options, native
+completed-file drag-out, scanner/sound controls, onboarding, and toolbar/column
+customization. Localization is skipped at the user's request. P2–P4 remain planned.
+
+Download Later now persists directly as Paused before scheduler admission; resume
+starts the transfer. Column sorting and clear-completed-history are available.
+Bulk failures are surfaced with an authoritative snapshot refresh. Native release
+and accessibility checks are tracked in `docs/p1-validation.md`.
 
 Immediate work:
 
@@ -727,7 +737,9 @@ Immediate work:
    focus, notification permissions, and NSIS install/upgrade/uninstall.
 2. Publish a signed update channel and exercise live update delivery, downgrade
    refusal, and queue preservation across an upgrade.
-3. Complete the P1 release gate: category routing, accessibility validation,
+3. Complete the P1 release gate: native accessibility validation,
    and preservation of settings/queue/history across updates.
 4. Move to P2 browser capture and batch/CLI once the desktop workflows are stable.
-5. Keep P3 and P4 as prioritized backlog items; do not schedule them until their dependencies are met.
+5. Implement scheduling and named queues only after batch/CLI meets its persistence,
+   idempotency, and noninteractive automation gate (§6.3.2).
+6. Keep P3 and P4 as prioritized backlog items; do not schedule them until their dependencies are met.

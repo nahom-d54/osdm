@@ -8,3 +8,5 @@
 *.db.lock
 *.part
 .DS_Store
+/test-results/
+/playwright-report/

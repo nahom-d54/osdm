@@ -86,8 +86,11 @@ details, Space pauses/resumes; shortcuts `N` (add), `/` or `Ctrl+F`
 (search), `D` (details panel); status bar announces throughput with
 `aria-live="polite"`.
 
-Still owed before the P1 gate: keyboard-only operation walkthrough,
-screen-reader pass, contrast/scaling verification (§8.3), i18n strings.
+Chromium regression coverage now checks keyboard dialog focus return, scaled
+layouts, reduced motion, and axe WCAG AA contrast/labels for populated lists and
+settings in both themes. Still owed before the release gate: native keyboard-only
+walkthrough, Narrator pass, and Windows scaling verification (§8.3). Localization
+is skipped at the user's request.
 
 ## Writing
 
@@ -99,13 +102,13 @@ about it.
 
 ## Notes for future passes
 
-- `upload`/navigate: `settings` are persisted via zustand `persist`
-  (localStorage). The shell must take over durable persistence eventually —
-  see `docs/bridge-contract.md` §2.
+- Native settings are authoritative SQLite-backed JSON; Zustand/localStorage
+  remains the browser mock's persistence adapter. See `docs/bridge-contract.md`.
 - Hand-rolled primitives in `src/components/ui/` follow shadcn-ish APIs;
   swapping in the actual shadcn registry later should be mechanical. Kept
   dependency-light per PLAN §1.2.
-- Categories (§6.2.2), Download-Later entry mode, quick-edit metadata,
-  multiple languages, and browser capture panels are P1-P2 follow-ups and
-  have no UI yet by design; the sidebar and API surfaces were shaped so they
-  extend rather than rework.
+- Category navigation and durable assignments, descriptions/destination editing,
+  Download Later, multiselect, column/toolbar controls, desktop dialogs, and
+  opt-in completion actions are implemented. The transfer desk's existing type,
+  spacing, surfaces, and durable segment visualization remain the visual vocabulary.
+- Browser capture remains P2. Multiple languages are excluded from this pass.

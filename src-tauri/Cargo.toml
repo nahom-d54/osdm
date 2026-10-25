@@ -16,7 +16,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-updater = "2"
-tokio = { version = "1", features = ["sync", "fs", "rt-multi-thread", "time"] }
+tokio = { version = "1", features = ["sync", "fs", "rt-multi-thread", "time", "process", "io-util"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
@@ -25,6 +25,7 @@ sha2 = "0.10"
 minisign-verify = "0.2"
 base64 = "0.22"
 semver = "1"
+drag = "2.1.1"
 
 [dev-dependencies]
 tempfile = "3"

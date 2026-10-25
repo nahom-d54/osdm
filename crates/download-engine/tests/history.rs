@@ -161,7 +161,7 @@ async fn revision_one_migration_preserves_history_and_creates_orphan_ledger() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(version, 3); // Revision-one releases reject this rather than silently discarding the ledger.
+    assert_eq!(version, 4); // Older releases reject this rather than silently discarding metadata.
     pool.close().await;
 }
 

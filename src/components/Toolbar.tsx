@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import { useState, type RefObject } from "react";
 import { PanelRight, Pause, Play, Plus, Search, X } from "lucide-react";
 import { cn } from "cn";
 
@@ -6,9 +6,11 @@ import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/icon-button";
 import { Input } from "@/components/ui/input";
 import { Kbd } from "@/components/ui/kbd";
+import { Modal } from "@/components/ui/modal";
 import { formatBytes, formatSpeed, plural } from "@/lib/format";
 import { VIEW_COPY, groupFor, matchesQuery, matchesView } from "@/lib/views";
 import { useEngine } from "@/store/engine";
+import { useSettings } from "@/store/settings";
 
 interface ToolbarProps {
   searchRef: RefObject<HTMLInputElement | null>;
@@ -16,14 +18,23 @@ interface ToolbarProps {
 }
 
 export function Toolbar({ searchRef, onAdd }: ToolbarProps) {
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const actions = useSettings((state) => state.settings.toolbar_actions);
+  const categories = useSettings((state) => state.settings.categories);
   const {
     downloads,
     view,
+    categoryFilter,
     query,
     setQuery,
     pauseAll,
     resumeAll,
     stopAll,
+    removeCompleted,
+    checkedIds,
+    removeChecked,
+    setChecked,
     detailsOpen,
     toggleDetails,
   } = useEngine();
@@ -49,15 +60,21 @@ export function Toolbar({ searchRef, onAdd }: ToolbarProps) {
 
   const visible = downloads.filter((download) => {
     if (!matchesView(view, download)) return false;
+    if (categoryFilter != null && (download.properties?.category_id ?? "") !== categoryFilter) return false;
     return matchesQuery(download, query);
   });
   const searching = query.trim() !== "";
+  const checked = downloads.filter((download) => checkedIds.includes(download.id));
+  const canDelete = checked.length > 0 && checked.every((download) => ["Completed", "Failed", "Canceled"].includes(download.state));
 
   const summary = (() => {
     if (searching) {
       return `${plural(visible.length, "match", "matches")} for “${query.trim()}”`;
     }
+    if (categoryFilter != null) return plural(visible.length, "download");
     switch (view) {
+      case "unfinished":
+        return plural(downloads.filter((download) => download.state !== "Completed").length, "unfinished download");
       case "all":
         return [
           plural(downloads.length, "download"),
@@ -100,7 +117,7 @@ export function Toolbar({ searchRef, onAdd }: ToolbarProps) {
         <div className="min-w-0 flex-1">
           <div className="eyebrow">{groupFor(view)}</div>
           <h1 className="mt-1.5 font-display text-[27px] font-semibold leading-none tracking-[-0.035em] text-ink-strong">
-            {VIEW_COPY[view].title}
+            {categoryFilter == null ? VIEW_COPY[view].title : categoryFilter === "" ? "General" : categories.find((category) => category.id === categoryFilter)?.name ?? "Deleted category"}
           </h1>
           <p className="mt-2 flex items-center gap-2 text-[11.5px] text-muted-foreground">
             <span
@@ -154,51 +171,36 @@ export function Toolbar({ searchRef, onAdd }: ToolbarProps) {
             )}
           </div>
 
-          <div className="flex items-center gap-0.5 rounded-md border border-line-soft bg-panel/60 p-0.5">
-            <IconButton
-              label="Resume paused"
-              onClick={() => void resumeAll()}
-              disabled={paused === 0}
-              size="icon-sm"
-            >
-              <Play strokeWidth={1.75} />
-            </IconButton>
-            <IconButton
-              label="Pause active"
-              onClick={() => void pauseAll()}
-              disabled={pausable === 0}
-              size="icon-sm"
-            >
-              <Pause strokeWidth={1.75} />
-            </IconButton>
-            <IconButton
-              label="Stop all"
-              onClick={() => void stopAll()}
-              disabled={stoppable === 0}
-              size="icon-sm"
-              className="hover:text-danger"
-            >
-              <X strokeWidth={1.75} />
-            </IconButton>
-          </div>
+          {actions.map((action) => {
+            const command = {
+              resume: { label: "Resume paused", run: resumeAll, disabled: paused === 0, Icon: Play },
+              pause: { label: "Pause active", run: pauseAll, disabled: pausable === 0, Icon: Pause },
+              stop: { label: "Stop all", run: stopAll, disabled: stoppable === 0, Icon: X },
+              inspector: { label: "Toggle inspector", run: toggleDetails, disabled: false, Icon: PanelRight },
+            }[action];
+            return command && <IconButton key={action} label={command.label} onClick={() => void command.run()} disabled={command.disabled} active={action === "inspector" && detailsOpen} size="icon-sm" className="border border-line-soft bg-panel/60"><command.Icon strokeWidth={1.75} /></IconButton>;
+          })}
 
-          <IconButton
-            label="Toggle inspector"
-            shortcut="D"
-            onClick={toggleDetails}
-            active={detailsOpen}
-            size="icon-sm"
-            className="border border-line-soft bg-panel/60"
-          >
-            <PanelRight strokeWidth={1.75} />
-          </IconButton>
-
+          {view === "completed" && <Button variant="secondary" disabled={completed.length === 0} onClick={() => void removeCompleted()} title="Remove completed history entries; downloaded files are kept">
+            Clear completed history
+          </Button>}
           <Button onClick={onAdd} className="ml-0.5">
             <Plus strokeWidth={2} />
             Add download
           </Button>
         </div>
       </div>
+      {checked.length > 0 && <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+        <span>{checked.length} selected</span>
+        <Button size="sm" variant="secondary" disabled={!canDelete} title={canDelete ? "Choose whether to remove partial data" : "Cancel selected active/paused downloads before deleting"} onClick={() => setDeleteOpen(true)}>Delete selected</Button>
+        <Button size="sm" variant="ghost" onClick={() => setChecked([])}>Clear selection</Button>
+        {!canDelete && <span className="text-muted-foreground">Cancel unfinished transfers before deleting them.</span>}
+      </div>}
+      <Modal open={deleteOpen} onOpenChange={(open) => { if (!deleting) setDeleteOpen(open); }} title="Delete selected entries?" description="Published files are never removed. Choose whether to keep temporary data for later cleanup." footer={<>
+        <Button variant="ghost" disabled={deleting} onClick={() => setDeleteOpen(false)}>Cancel</Button>
+        <Button variant="secondary" disabled={deleting || !canDelete} onClick={async () => { setDeleting(true); await removeChecked(false); setDeleting(false); setDeleteOpen(false); }}>History only</Button>
+        <Button variant="destructive" disabled={deleting || !canDelete} onClick={async () => { setDeleting(true); await removeChecked(true); setDeleting(false); setDeleteOpen(false); }}>Entries and partial data</Button>
+      </>}><p className="text-sm">{checked.length} entries selected. Failed operations remain in the list and are reported in the error banner.</p></Modal>
     </header>
   );
 }

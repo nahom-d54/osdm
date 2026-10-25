@@ -1,4 +1,4 @@
-import type { ReactNode, RefObject } from "react";
+import { useLayoutEffect, useRef, type ReactNode, type RefObject } from "react";
 
 import {
   Dialog,
@@ -32,9 +32,15 @@ export function Modal({
   className = "sm:max-w-[33rem]",
   initialFocus,
 }: ModalProps) {
+  const opener = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    if (open && document.activeElement instanceof HTMLElement && !document.activeElement.closest('[data-slot="dialog-content"]')) {
+      opener.current = document.activeElement;
+    }
+  }, [open]);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={className} initialFocus={initialFocus}>
+      <DialogContent className={className} initialFocus={initialFocus} finalFocus={opener}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           {description ? <DialogDescription>{description}</DialogDescription> : null}

@@ -38,6 +38,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - Uses a strong ETag when available, otherwise Last-Modified. Missing validators use a single stream.
 - Stores progress in SQLite and syncs bytes before committing recoverable offsets.
 - Recovers interrupted downloads as paused. Resume explicitly after reopening.
+- `enqueue_paused` implements Download Later: persist a paused, destination-reserving
+  entry without any transfer request or temporary file. Call `resume` to start it.
 - Pause/cancel drain workers before returning. Cancellation keeps partial data.
 - `retry` requeues failed/canceled work and revalidates it before resuming.
 - Retries transient failures with exponential backoff and jitter (fallback capped at 120 seconds). `Retry-After` (delta-seconds or HTTP-date) is never shortened. Active downloads keep retrying HTTP 429/503 automatically without exhausting the retry budget. A rate-limited host shares one cooldown window across workers and downloads, and every wait is cancellable.
@@ -50,6 +52,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - Calls must run inside a Tokio runtime. Call `shutdown` before dropping or reopening the engine.
 - An OS file lock enforces one engine owner per database. Shutdown releases ownership.
 - Destination parent directories must exist. Existing destination files are never overwritten.
+- `enqueue_with_properties` admits optional description/category metadata, deferred
+  state, session-only Basic credentials, and same-volume working storage together.
+- `update_properties` persists organization metadata without changing transfer identity.
+  `update_destination` renames a stopped unpublished job in its current folder;
+  changing folders requires no allocated layout/partial. Existing files never move.
+- Basic credentials require HTTPS outside loopback, apply only to one download's
+  original origin, are stripped across redirects, and are never serialized. Reenter
+  them after restart or source replacement using `set_credentials` on paused/failed work.
+- Custom temporary storage must support hard links on the destination volume.
+  Publication uses a same-directory staging link; no cross-volume copy fallback.
 - `remove_download(id, remove_partial_file)` removes fully stopped terminal history. Optional deletion only unlinks the owned temporary name, never a published destination.
 - `cleanup_partial_data()` explicitly removes Failed/Canceled partials and entryless partials in the persisted orphan ledger. It never scans arbitrary folders or deletes unrecorded files.
 - After removal, `reorder` must contain every remaining ID exactly once; remaining ordering is preserved.
@@ -64,7 +76,8 @@ The database contains full source URLs, including signed query strings. Do not p
 
 ## Current limits
 
-- Direct URLs only; no browser cookies, custom authentication headers, proxy configuration, or media extraction.
+- Direct URLs only; no browser cookies, custom authentication headers beyond explicit
+  session-only Basic auth, proxy configuration, or media extraction.
 - No HTTP response cache: file bodies are streamed to disk once, and durable checkpoints already avoid re-fetching committed ranges.
 - SHA-256 verification needs a trustworthy reference supplied by the user/publisher. Computing a hash alone does not establish authenticity; chunk-level corruption cannot be localized without trusted per-chunk hashes.
 - Partial cleanup is explicit, not automatic. Unrecorded `.part` files are left alone.
@@ -73,7 +86,10 @@ The database contains full source URLs, including signed query strings. Do not p
 - Changing the bandwidth limit wakes existing throttle waits; low-speed transfers remain cancellable.
 - Durable segment layouts remain fixed while request sizes and active connections adapt. Dynamic work stealing is not implemented; instantaneous speed/ETA may fluctuate.
 - Server validators must be truthful. Last-Modified has weaker identity guarantees than strong ETags.
-- Schema revision 3 adds integrity requirements. Revisions 0/1/2 migrate transactionally with unverified defaults; newer revisions are rejected. Older engines reject revision 3 rather than ignoring checksum requirements, so downgrading requires restoring a compatible backup.
+- Schema revision 4 adds organization metadata and custom working-directory ownership;
+  revision 3 added integrity requirements. Revisions 0–3 migrate transactionally with
+  safe defaults; newer revisions are rejected. Older engines reject revision 4 rather
+  than losing metadata/storage ownership. Downgrading requires a compatible backup.
 
 ## Testing
 

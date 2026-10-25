@@ -21,7 +21,11 @@ export interface EngineBridge {
   shutdown(): Promise<void>;
 
   // --- Engine commands (mirrored 1:1) ---
-  enqueue(request: import("@/lib/types").DownloadRequest): Promise<string>;
+  /** Deferred requests are persisted as Paused before scheduler admission. */
+  enqueue(request: import("@/lib/types").DownloadRequest, startPaused?: boolean, properties?: import("@/lib/types").DownloadProperties, credentials?: import("@/lib/types").BasicCredentials): Promise<string>;
+  setCredentials(id: string, credentials: import("@/lib/types").BasicCredentials | null): Promise<void>;
+  updateProperties(id: string, properties: import("@/lib/types").DownloadProperties): Promise<void>;
+  updateDestination(id: string, destination: string): Promise<void>;
   /** Read final URL, server filename, length, and range support without enqueueing. */
   probe(url: string): Promise<UrlProbe>;
   pause(id: string): Promise<void>;
@@ -54,4 +58,6 @@ export interface EngineBridge {
   pathExists(path: string): Promise<boolean>;
   openPath(path: string): Promise<void>;
   revealPath(path: string): Promise<void>;
+  testSound(path: string): Promise<void>;
+  dragCompleted(id: string): Promise<void>;
 }

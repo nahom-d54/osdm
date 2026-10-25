@@ -56,6 +56,12 @@ Most downloads fail loudly for ordinary reasons: a server rate-limits a burst of
 - **Integrity before publication.** SHA-256 is computed with bounded memory. Supply the publisher’s checksum when adding a download to get `Verified`; without one, OSDM still reports a `Computed` hash rather than pretending it is proof.
 - **Source replacement.** Change the URL of a paused or failed download without losing its destination. The engine reuses checkpoints only when range support, validator, and length still match.
 - **Desktop workflow.** Add-and-probe flow, queue ordering, pause/resume/retry, per-download details, speed limiting, completion notifications, and close-to-tray behavior.
+- **P1 daily-use workflows (source).** Download Later, descriptions/categories,
+  stopped destination editing, multiselect history removal, session-only Basic
+  authentication, same-volume temporary storage, configurable toolbar/columns,
+  completion/progress dialogs, copy drag-out, and opt-in scanner/WAV actions.
+  See [P1 validation and safety limits](docs/p1-validation.md); native release
+  validation remains separate. Localization is skipped for this implementation.
 - **Automatic GitHub updates.** OSDM checks published GitHub Releases after launch and every six hours, can include prereleases, and downloads only after confirmation. Packages are checked against the release’s `SHA256SUMS.txt`. Windows updates install in place with `/UPDATE`, so the previous installation is not uninstalled.
 - **Local-first by default.** No telemetry. The queue lives in a local SQLite database, and the engine is independent of the desktop shell.
 

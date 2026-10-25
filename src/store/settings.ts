@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { DEFAULT_CATEGORIES, type Category } from "@/lib/categories";
 
 export type ThemeChoice = "system" | "dark" | "light";
 
@@ -21,7 +22,32 @@ export interface AppSettings {
   auto_update_check: boolean;
   /** Include alpha/beta GitHub releases in update checks. */
   include_prereleases: boolean;
+  categories: Category[];
+  remember_last_directory: boolean;
+  desktop: DesktopPreferences;
+  visible_columns: string[];
+  toolbar_actions: string[];
+  temporary_directory: string;
+  onboarding_complete: boolean;
 }
+
+export interface DesktopPreferences {
+  silent: boolean;
+  completion_dialog: boolean;
+  progress_dialog: boolean;
+  minimized_progress: boolean;
+  confirm_downloads: boolean;
+  sound_file: string;
+  scanner_enabled: boolean;
+  scanner_executable: string;
+  scanner_arguments: string[];
+}
+
+export const DEFAULT_DESKTOP: DesktopPreferences = {
+  silent: false, completion_dialog: true, progress_dialog: false,
+  minimized_progress: false, confirm_downloads: true, sound_file: "",
+  scanner_enabled: false, scanner_executable: "", scanner_arguments: ["{file}"],
+};
 
 export const DEFAULT_SETTINGS: AppSettings = {
   theme: "dark",
@@ -35,6 +61,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   default_directory: "",
   auto_update_check: true,
   include_prereleases: true,
+  categories: DEFAULT_CATEGORIES,
+  remember_last_directory: true,
+  desktop: DEFAULT_DESKTOP,
+  visible_columns: ["state", "rate", "eta", "size"],
+  toolbar_actions: ["resume", "pause", "stop", "inspector"],
+  temporary_directory: "",
+  onboarding_complete: false,
 };
 
 interface SettingsStore {
@@ -54,7 +87,7 @@ export const useSettings = create<SettingsStore>()(
       // their choices while receiving safe defaults for new ones.
       merge: (persisted, current) => {
         const saved = (persisted as { settings?: Partial<AppSettings> } | undefined)?.settings;
-        return { ...current, settings: { ...current.settings, ...(saved ?? {}) } };
+        return { ...current, settings: { ...current.settings, ...(saved ?? {}), desktop: { ...DEFAULT_DESKTOP, ...saved?.desktop } } };
       },
     },
   ),

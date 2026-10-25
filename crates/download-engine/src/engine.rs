@@ -46,6 +46,29 @@ pub struct Engine {
     pub(crate) inner: Arc<Inner>,
 }
 
+fn validate_credentials(url: &reqwest::Url, credentials: Option<&BasicCredentials>) -> Result<()> {
+    if let Some(credentials) = credentials {
+        if credentials.username.len() > 1024
+            || credentials.password.len() > 4096
+            || credentials.username.contains(':')
+            || credentials.username.contains(['\r', '\n'])
+            || credentials.password.contains(['\r', '\n'])
+        {
+            return Err(Error::Invalid(
+                "invalid Basic authentication credentials".into(),
+            ));
+        }
+        if url.scheme() != "https"
+            && !matches!(url.host_str(), Some("127.0.0.1" | "[::1]" | "localhost"))
+        {
+            return Err(Error::Invalid(
+                "credentials require HTTPS (except loopback testing)".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) struct Data {
     pub downloads: Vec<Download>,
     pub running: HashMap<DownloadId, CancellationToken>,
@@ -58,6 +81,7 @@ pub(crate) struct Inner {
     pub store: Store,
     pub config: Config,
     pub client: reqwest::Client,
+    pub credentials: Mutex<HashMap<DownloadId, (String, BasicCredentials)>>,
     pub connections: Arc<Semaphore>,
     pub hosts: Mutex<HashMap<String, Arc<adaptive::Host>>>,
     pub download_hosts: Mutex<HashMap<DownloadId, Arc<adaptive::Host>>>,
@@ -69,6 +93,17 @@ pub(crate) struct Inner {
 }
 
 impl Inner {
+    pub async fn request(&self, url: &str, id: Option<DownloadId>) -> reqwest::RequestBuilder {
+        let request = self.client.get(url);
+        let credentials = self.credentials.lock().await;
+        if let Some((origin, secret)) = id.and_then(|id| credentials.get(&id))
+            && reqwest::Url::parse(url)
+                .is_ok_and(|url| url.origin().ascii_serialization() == *origin)
+        {
+            return request.basic_auth(&secret.username, Some(&secret.password));
+        }
+        request
+    }
     pub async fn host(&self, url: &str) -> Result<Arc<adaptive::Host>> {
         let url = validated_url(url)?;
         let hostname = url.host_str().unwrap().to_owned();
@@ -173,6 +208,7 @@ impl Engine {
             store,
             config,
             client,
+            credentials: Mutex::new(HashMap::new()),
             events,
         });
         let weak = Arc::downgrade(&inner);
@@ -279,7 +315,27 @@ impl Engine {
     }
 
     pub async fn enqueue(&self, request: DownloadRequest) -> Result<DownloadId> {
+        self.enqueue_with_properties(request, DownloadProperties::default(), false, None, None)
+            .await
+    }
+
+    /// Persist a deferred download without admitting it to the scheduler.
+    pub async fn enqueue_paused(&self, request: DownloadRequest) -> Result<DownloadId> {
+        self.enqueue_with_properties(request, DownloadProperties::default(), true, None, None)
+            .await
+    }
+
+    pub async fn enqueue_with_properties(
+        &self,
+        request: DownloadRequest,
+        properties: DownloadProperties,
+        start_paused: bool,
+        credentials: Option<BasicCredentials>,
+        temporary_directory: Option<std::path::PathBuf>,
+    ) -> Result<DownloadId> {
+        properties.validate()?;
         let url = validated_url(&request.url)?;
+        validate_credentials(&url, credentials.as_ref())?;
         let expected_sha256 = integrity::normalize(request.expected_sha256)?;
         if !request.destination.is_absolute() || request.destination.file_name().is_none() {
             return Err(Error::Invalid(
@@ -289,6 +345,10 @@ impl Engine {
         let parent = request.destination.parent().unwrap();
         let parent = tokio::fs::canonicalize(parent).await?;
         let destination = parent.join(request.destination.file_name().unwrap());
+        let temporary_directory = match temporary_directory {
+            Some(directory) => Some(storage::validate_directory(directory, &parent).await?),
+            None => None,
+        };
         if tokio::fs::try_exists(&destination).await? {
             return Err(Error::Invalid("destination already exists".into()));
         }
@@ -307,9 +367,18 @@ impl Engine {
         let download = Download {
             id,
             url: url.to_string(),
-            temporary_path: parent.join(format!(".osdm-{id}.part")),
+            temporary_path: temporary_directory
+                .as_ref()
+                .unwrap_or(&parent)
+                .join(format!(".osdm-{id}.part")),
+            temporary_directory,
             destination,
-            state: DownloadState::Queued,
+            properties,
+            state: if start_paused {
+                DownloadState::Paused
+            } else {
+                DownloadState::Queued
+            },
             total_bytes: None,
             segments: vec![],
             error: None,
@@ -328,6 +397,13 @@ impl Engine {
             .save(&download, data.downloads.len())
             .await?;
         data.downloads.push(download);
+        if let Some(credentials) = credentials {
+            self.inner
+                .credentials
+                .lock()
+                .await
+                .insert(id, (url.origin().ascii_serialization(), credentials));
+        }
         Ok(id)
     }
 
@@ -363,6 +439,9 @@ impl Engine {
                 token.cancel();
             }
             self.inner.save(&data, id).await?;
+            if cancel {
+                self.inner.credentials.lock().await.remove(&id);
+            }
         }
         self.wait_idle(id).await;
         Ok(())
@@ -397,6 +476,132 @@ impl Engine {
 
     pub async fn retry(&self, id: DownloadId) -> Result<()> {
         self.resume(id).await
+    }
+
+    /// Organization changes never move files or alter transfer identity.
+    pub async fn update_properties(
+        &self,
+        id: DownloadId,
+        properties: DownloadProperties,
+    ) -> Result<()> {
+        properties.validate()?;
+        let mut data = self.inner.data.lock().await;
+        if data.stopped {
+            return Err(Error::Shutdown);
+        }
+        let index = data
+            .downloads
+            .iter()
+            .position(|d| d.id == id)
+            .ok_or(Error::NotFound)?;
+        let mut download = data.downloads[index].clone();
+        download.properties = properties;
+        self.inner.store.save(&download, index).await?;
+        data.downloads[index] = download;
+        Ok(())
+    }
+
+    pub async fn set_credentials(
+        &self,
+        id: DownloadId,
+        credentials: Option<BasicCredentials>,
+    ) -> Result<()> {
+        let data = self.inner.data.lock().await;
+        if data.stopped {
+            return Err(Error::Shutdown);
+        }
+        let download = data
+            .downloads
+            .iter()
+            .find(|d| d.id == id)
+            .ok_or(Error::NotFound)?;
+        if data.running.contains_key(&id)
+            || !matches!(
+                download.state,
+                DownloadState::Paused | DownloadState::Failed
+            )
+        {
+            return Err(Error::Invalid("pause before changing credentials".into()));
+        }
+        let url = validated_url(&download.url)?;
+        validate_credentials(&url, credentials.as_ref())?;
+        let mut secrets = self.inner.credentials.lock().await;
+        if let Some(credentials) = credentials {
+            secrets.insert(id, (url.origin().ascii_serialization(), credentials));
+        } else {
+            secrets.remove(&id);
+        }
+        Ok(())
+    }
+
+    /// Retain partial bytes for a rename in the same directory. Directory changes
+    /// are allowed before allocation, without moving or truncating partial data.
+    pub async fn update_destination(
+        &self,
+        id: DownloadId,
+        destination: std::path::PathBuf,
+    ) -> Result<()> {
+        if !destination.is_absolute() || destination.file_name().is_none() {
+            return Err(Error::Invalid(
+                "destination must be an absolute filename".into(),
+            ));
+        }
+        let parent = tokio::fs::canonicalize(destination.parent().unwrap()).await?;
+        let destination = parent.join(destination.file_name().unwrap());
+        let mut data = self.inner.data.lock().await;
+        if data.stopped {
+            return Err(Error::Shutdown);
+        }
+        let index = data
+            .downloads
+            .iter()
+            .position(|d| d.id == id)
+            .ok_or(Error::NotFound)?;
+        let mut download = data.downloads[index].clone();
+        if data.running.contains_key(&id)
+            || !matches!(
+                download.state,
+                DownloadState::Paused | DownloadState::Failed | DownloadState::Canceled
+            )
+        {
+            return Err(Error::Invalid(
+                "pause an unpublished download before changing its destination".into(),
+            ));
+        }
+        if download.ready_to_publish {
+            return Err(Error::Invalid(
+                "resume publication recovery before editing the destination".into(),
+            ));
+        }
+        if destination == download.destination {
+            return Ok(());
+        }
+        if tokio::fs::try_exists(&destination).await?
+            || data
+                .downloads
+                .iter()
+                .any(|d| d.id != id && same_destination(&d.destination, &destination))
+        {
+            return Err(Error::Invalid(
+                "destination already exists or is reserved".into(),
+            ));
+        }
+        if download.destination.parent() != Some(parent.as_path()) {
+            if !download.segments.is_empty()
+                || tokio::fs::try_exists(&download.temporary_path).await?
+            {
+                return Err(Error::Invalid("partial data exists; keep its folder and edit only the filename, or cancel and add a new download".into()));
+            }
+            if let Some(directory) = download.temporary_directory.clone() {
+                storage::validate_directory(directory, &parent).await?;
+            } else {
+                download.temporary_path = parent.join(format!(".osdm-{id}.part"));
+            }
+        }
+        download.destination = destination;
+        self.inner.store.save(&download, index).await?;
+        data.downloads[index] = download;
+        Ok(())
     }
 
     /// Replace an inactive source. Resume revalidates the representation before
@@ -439,6 +644,7 @@ impl Engine {
         download.ready_to_publish = false;
         self.inner.store.save(&download, position).await?;
         data.downloads[position] = download;
+        self.inner.credentials.lock().await.remove(&id);
         Ok(())
     }
 
@@ -504,6 +710,7 @@ impl Engine {
         for (position, download) in data.downloads.iter().enumerate() {
             self.inner.store.save(download, position).await?;
         }
+        self.inner.credentials.lock().await.clear();
         ownership.take();
         Ok(())
     }
@@ -542,5 +749,14 @@ async fn run(inner: Arc<Inner>, id: DownloadId, token: CancellationToken) {
         let _ = inner.events.send(EngineEvent::Error(error.to_string()));
     }
     data.running.remove(&id);
+    if data.downloads.iter().any(|download| {
+        download.id == id
+            && matches!(
+                download.state,
+                DownloadState::Completed | DownloadState::Canceled
+            )
+    }) {
+        inner.credentials.lock().await.remove(&id);
+    }
     inner.download_hosts.lock().await.remove(&id);
 }

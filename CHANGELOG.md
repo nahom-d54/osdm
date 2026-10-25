@@ -4,6 +4,38 @@ All notable changes to OSDM are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- P1 category destination suggestions with built-in and custom categories,
+  ordered domain/extension rules, folder overrides, and persistent preferences.
+- Optional last-used folder remembering and category-routing regression tests.
+- Durable Download Later, sortable download columns, and clear-completed-history
+  action that preserves published files.
+- Persistent download descriptions/category assignments, category navigation,
+  stopped destination editing, unfinished grouping, and multi-select deletion.
+- Per-transfer, origin-scoped, session-only HTTP Basic authentication.
+- Configurable same-volume temporary storage with safe publication staging and cleanup.
+- Completion/progress dialogs, minimized progress, silent mode, immediate-start
+  preference, native completed-file copy drag-out, and first-run connection checks.
+- Opt-in external scanner with literal arguments/timeouts, Windows WAV completion
+  sounds and testing, and persistent toolbar/column customization.
+- Chromium workflow, keyboard, scaled-layout, and axe accessibility tests for both themes.
+
+### Changed
+
+- Engine schema 4 transactionally upgrades existing databases and prevents older
+  writers from discarding metadata or custom temporary-storage ownership.
+- Localization is excluded from the current P1 scope at the user's request.
+
+### Fixed
+
+- Bulk actions now report partial failures and reconcile the list after errors.
+- Keyboard navigation preserves the selected row's tab stop and leaves nested
+  action-button arrow keys alone. Unknown-length progress no longer shows a
+  fabricated percentage fill.
+
 ## [0.1.2-alpha.1] - 2026-10-25
 
 ### Added

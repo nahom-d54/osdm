@@ -3,6 +3,8 @@ import { CircleAlert, X } from "lucide-react";
 
 import { AddDownloadDialog } from "@/components/AddDownloadDialog";
 import { DetailsPanel } from "@/components/DetailsPanel";
+import { DesktopDialogs } from "@/components/DesktopDialogs";
+import { OnboardingDialog } from "@/components/OnboardingDialog";
 import { DownloadList } from "@/components/DownloadList";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { Sidebar } from "@/components/Sidebar";
@@ -141,6 +143,8 @@ export default function App() {
 
         <AddDownloadDialog open={addOpen} onClose={() => setAddOpen(false)} />
         <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+        <DesktopDialogs />
+        <OnboardingDialog />
       </div>
     </TooltipProvider>
   );

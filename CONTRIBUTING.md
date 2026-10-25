@@ -61,6 +61,9 @@ It uses `MockBridge` with deterministic transfer behavior.
 | `pnpm desktop:dev` | Native Tauri app and Rust engine |
 | `pnpm typecheck` | TypeScript only |
 | `pnpm build` | Typecheck and production web build |
+| `pnpm test` | Routing, sorting, grouping, and bulk behavior regressions |
+| `pnpm exec playwright install chromium` | Install the UI test browser |
+| `pnpm test:ui` | Build and run Chromium workflows plus axe accessibility checks |
 | `cargo test -p download-engine` | Fast engine suite |
 | `cargo test --workspace` | Engine plus native shell tests |
 | `cargo fmt --all -- --check` | Formatting gate |

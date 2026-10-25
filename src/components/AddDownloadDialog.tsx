@@ -12,11 +12,13 @@ import {
 import { cn } from "cn";
 
 import { FileBadge } from "@/components/FileBadge";
+import { CredentialsFields } from "@/components/CredentialsFields";
 import { Button } from "@/components/ui/button";
 import { ErrorNote, Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { getBridge } from "@/lib/bridge";
+import { routeCategory } from "@/lib/categories";
 import {
   formatBytes,
   hostOf,
@@ -49,8 +51,12 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
   const [step, setStep] = useState<Step>("source");
   const [url, setUrl] = useState("");
   const [directory, setDirectory] = useState("");
+  const [categoryId, setCategoryId] = useState("");
+  const fallbackDirectory = useRef("");
   const [filename, setFilename] = useState("");
   const [checksum, setChecksum] = useState("");
+  const [description, setDescription] = useState("");
+  const [credentials, setCredentials] = useState({ username: "", password: "" });
   const [probe, setProbe] = useState<UrlProbe | null>(null);
   const [nameSource, setNameSource] = useState<NameSource>("link");
   const [probeError, setProbeError] = useState<string | null>(null);
@@ -63,12 +69,14 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
   // Reset on every open, and invalidate any in-flight probe on close.
   useEffect(() => {
     probeSequence.current += 1;
-    if (!open) return;
+    if (!open) { setCredentials({ username: "", password: "" }); return; }
     setStep("source");
     setUrl("");
     setDirectory(settings.default_directory);
+    setCategoryId("");
     setFilename("");
     setChecksum("");
+    setDescription("");
     setProbe(null);
     setNameSource("link");
     setProbeError(null);
@@ -157,12 +165,29 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
         ? sanitizeFilename(result.filename)
         : "";
       setProbe(result);
-      setDirectory(folder);
-      setFilename(
-        serverName || suggestFilename(result.final_url || trimmedUrl),
-      );
+      const name = serverName || suggestFilename(result.final_url || trimmedUrl);
+      fallbackDirectory.current = folder;
+      const category = routeCategory(settings.categories, trimmedUrl, name);
+      setCategoryId(category?.id ?? "");
+      setDirectory(category?.directory || folder);
+      setFilename(name);
       setNameSource(serverName ? "server" : "link");
       setStep("confirm");
+      if (!settings.desktop.confirm_downloads) {
+        const folderToUse = category?.directory || folder;
+        const destination = folderToUse && name ? joinPath(folderToUse, name) : null;
+        if (destination) {
+          setBusy(true);
+          try {
+            if (await getBridge().pathExists(destination)) setConflict(true);
+            else {
+              await enqueue(trimmedUrl, destination, undefined, false, { description: "", category_id: category?.id ?? null });
+              onClose();
+            }
+          } catch (caught) { setError(errorMessage(caught)); }
+          finally { setBusy(false); }
+        }
+      }
     } catch (caught) {
       if (sequence !== probeSequence.current) return;
       const folder =
@@ -178,8 +203,12 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
         total_bytes: null,
         ranged: false,
       });
-      setDirectory(folder);
-      setFilename(suggestFilename(trimmedUrl));
+      const name = suggestFilename(trimmedUrl);
+      fallbackDirectory.current = folder;
+      const category = routeCategory(settings.categories, trimmedUrl, name);
+      setCategoryId(category?.id ?? "");
+      setDirectory(category?.directory || folder);
+      setFilename(name);
       setNameSource("link");
       setProbeError(errorMessage(caught));
       setStep("confirm");
@@ -188,7 +217,7 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
     }
   };
 
-  const download = async () => {
+  const download = async (startPaused = false) => {
     if (checksumInvalid) {
       setError("SHA-256 must contain exactly 64 hexadecimal characters.");
       return;
@@ -209,9 +238,11 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
         setBusy(false);
         return;
       }
-      await enqueue(trimmedUrl, target, checksum.trim() || undefined);
+      await enqueue(trimmedUrl, target, checksum.trim() || undefined, startPaused, { description, category_id: categoryId || null }, credentials.username || credentials.password ? credentials : undefined);
       try {
-        update({ default_directory: directory });
+        if (settings.remember_last_directory && !settings.categories.some((category) => category.directory === directory)) {
+          update({ default_directory: directory });
+        }
       } catch {
         // The download is already queued; a preference write is not critical.
       }
@@ -256,7 +287,7 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
 
   const sourceHint = inspecting
     ? "Reading the filename, size, and range support from the server…"
-    : "Direct HTTP or HTTPS link. Redirects are followed.";
+    : settings.desktop.confirm_downloads ? "Direct HTTP or HTTPS link. Redirects are followed." : "Immediate start is enabled. A successful inspection starts the transfer unless its destination conflicts.";
   const filenameHint =
     nameSource === "server"
       ? "Named by the server in its Content-Disposition header."
@@ -275,7 +306,7 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
       description={
         step === "source"
           ? "Paste a direct link. OSDM asks the server for its filename before the transfer starts."
-          : "Review the filename and destination. The transfer starts only when you press Download."
+          : "Review the filename and destination. Download later saves a paused entry; Resume starts it."
       }
       className="sm:max-w-[34rem]"
       footer={
@@ -295,7 +326,7 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
               ) : (
                 <ArrowRight />
               )}
-              {inspecting ? "Inspecting…" : "Continue"}
+              {inspecting ? "Inspecting…" : settings.desktop.confirm_downloads ? "Continue" : "Inspect and download"}
             </Button>
           </div>
         ) : (
@@ -316,6 +347,9 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
             </Button>
             <Button variant="ghost" size="sm" disabled={busy} onClick={onClose}>
               Cancel
+            </Button>
+            <Button variant="secondary" size="sm" disabled={!canDownload} onClick={() => void download(true)}>
+              Download later
             </Button>
             <Button
               type="submit"
@@ -466,6 +500,19 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
               />
             </Field>
 
+            <Field label="Category" htmlFor="download-category" hint="Suggests a folder for this download. Choose another folder to override it.">
+              <select id="download-category" value={categoryId} disabled={busy} className="w-full rounded-md border border-line-soft bg-background p-2 text-sm"
+                onChange={(event) => {
+                  const id = event.target.value;
+                  setCategoryId(id);
+                  const category = settings.categories.find((item) => item.id === id);
+                  setDirectory(category?.directory || settings.default_directory || fallbackDirectory.current);
+                }}>
+                <option value="">General</option>
+                {settings.categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+              </select>
+            </Field>
+
             <Field label="Save to" htmlFor="download-folder">
               <div className="flex gap-2">
                 <Input
@@ -514,6 +561,10 @@ export function AddDownloadDialog({ open, onClose }: AddDownloadDialogProps) {
               />
             </Field>
             {checksumInvalid && <ErrorNote>SHA-256 must contain exactly 64 hexadecimal characters.</ErrorNote>}
+            <Field label="Description" htmlFor="download-description">
+              <Input id="download-description" value={description} maxLength={1024} disabled={busy} onChange={(event) => setDescription(event.target.value)} />
+            </Field>
+            <CredentialsFields value={credentials} onChange={setCredentials} disabled={busy} />
 
             {conflict && (
               <ErrorNote>

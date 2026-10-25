@@ -56,6 +56,39 @@ pub struct DownloadRequest {
     pub expected_sha256: Option<String>,
 }
 
+/// Explicit per-transfer Basic authentication. Session-only; never serialized,
+/// logged, included in a Download snapshot, or stored in SQLite.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BasicCredentials {
+    pub username: String,
+    pub password: String,
+}
+
+/// Durable non-secret organization metadata. Credentials never belong here.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct DownloadProperties {
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub category_id: Option<String>,
+}
+
+impl DownloadProperties {
+    pub(crate) fn validate(&self) -> crate::Result<()> {
+        if self.description.len() > 4096
+            || self
+                .category_id
+                .as_ref()
+                .is_some_and(|id| id.is_empty() || id.len() > 128)
+        {
+            return Err(crate::Error::Invalid("invalid download properties".into()));
+        }
+        Ok(())
+    }
+}
+
 /// Metadata read from a URL before it is enqueued. No queue entry is created.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProbeInfo {
@@ -100,7 +133,12 @@ pub struct Download {
     pub id: DownloadId,
     pub url: String,
     pub destination: PathBuf,
+    #[serde(default)]
+    pub properties: DownloadProperties,
     pub temporary_path: PathBuf,
+    /// Canonical user-selected working directory, constrained to the destination volume.
+    #[serde(default)]
+    pub temporary_directory: Option<PathBuf>,
     pub state: DownloadState,
     pub total_bytes: Option<u64>,
     pub segments: Vec<Segment>,

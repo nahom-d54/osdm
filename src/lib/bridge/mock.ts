@@ -1,8 +1,20 @@
 import type { EngineBridge, EngineErrorListener, SnapshotListener } from "@/lib/bridge/types";
 import type { Download, DownloadRequest, EngineConfig, Segment, UrlProbe } from "@/lib/types";
 import { suggestFilename } from "@/lib/format";
+import { joinPath } from "@/lib/format";
+import { useSettings } from "@/store/settings";
 
 export class BridgeError extends Error {}
+
+function validateCredentials(source: string, credentials?: import("@/lib/types").BasicCredentials): void {
+  if (!credentials) return;
+  const url = new URL(source);
+  const encoder = new TextEncoder();
+  if (encoder.encode(credentials.username).length > 1024 || encoder.encode(credentials.password).length > 4096 || /[:\r\n]/.test(credentials.username) || /[\r\n]/.test(credentials.password)) {
+    throw new BridgeError("Invalid Basic authentication credentials.");
+  }
+  if (url.protocol !== "https:" && !["127.0.0.1", "[::1]", "localhost"].includes(url.hostname)) throw new BridgeError("Credentials require HTTPS (except loopback testing).");
+}
 
 type Phase = "probe" | "run" | "publish";
 
@@ -190,7 +202,8 @@ export class MockBridge implements EngineBridge {
 
   // --- lifecycle commands ---
 
-  async enqueue(request: DownloadRequest): Promise<string> {
+  async enqueue(request: DownloadRequest, startPaused = false, properties?: import("@/lib/types").DownloadProperties, credentials?: import("@/lib/types").BasicCredentials): Promise<string> {
+    validateCredentials(request.url, credentials);
     if (request.expected_sha256 && !/^[a-f0-9]{64}$/i.test(request.expected_sha256.trim())) {
       throw new BridgeError("SHA-256 must contain exactly 64 hexadecimal characters.");
     }
@@ -198,13 +211,16 @@ export class MockBridge implements EngineBridge {
       throw new BridgeError("A file already exists at this destination. The engine never overwrites.");
     }
     const id = crypto.randomUUID();
+    const temporaryDirectory = useSettings.getState().settings.temporary_directory;
     const entry: Entry = {
       download: {
         id,
         url: request.url,
         destination: request.destination,
-        temporary_path: temporaryPathFor(request.destination),
-        state: "Queued",
+        properties: properties ?? { description: "", category_id: null },
+        temporary_path: temporaryDirectory ? joinPath(temporaryDirectory, `.osdm-${id}.part`) : temporaryPathFor(request.destination),
+        temporary_directory: temporaryDirectory || null,
+        state: startPaused ? "Paused" : "Queued",
         total_bytes: null,
         segments: [{ start: 0, end: null, committed: 0, downloaded: 0 }],
         error: null,
@@ -223,6 +239,31 @@ export class MockBridge implements EngineBridge {
     this.entries.push(entry);
     this.markDirty();
     return id;
+  }
+
+  async updateProperties(id: string, properties: import("@/lib/types").DownloadProperties): Promise<void> {
+    if (properties.description.length > 4096 || (properties.category_id?.length ?? 0) > 128) throw new BridgeError("Invalid properties.");
+    this.find(id).download.properties = { ...properties };
+    this.markDirty();
+  }
+
+  async testSound(_path: string): Promise<void> { throw new BridgeError("Sound tests require the native Windows app."); }
+  async dragCompleted(_id: string): Promise<void> { throw new BridgeError("File drag-out requires the native app."); }
+  async setCredentials(id: string, _credentials: import("@/lib/types").BasicCredentials | null): Promise<void> {
+    const download = this.find(id).download;
+    if (!["Paused", "Failed"].includes(download.state)) throw new BridgeError("Pause before changing credentials.");
+    validateCredentials(download.url, _credentials ?? undefined);
+  }
+
+  async updateDestination(id: string, destination: string): Promise<void> {
+    const download = this.find(id).download;
+    if (!["Paused", "Failed", "Canceled"].includes(download.state)) throw new BridgeError("Pause the download before editing its destination.");
+    if (this.entries.some((entry) => entry.download.id !== id && entry.download.destination === destination)) throw new BridgeError("Destination is reserved.");
+    const parent = (path: string) => path.slice(0, Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")));
+    if (parent(destination) !== parent(download.destination) && download.segments.some((segment) => segment.downloaded > 0)) throw new BridgeError("Partial data exists; keep its folder and edit only the filename.");
+    if (parent(destination) !== parent(download.destination) && !download.temporary_directory) download.temporary_path = temporaryPathFor(destination);
+    download.destination = destination;
+    this.markDirty();
   }
 
   async probe(url: string): Promise<UrlProbe> {

@@ -110,7 +110,7 @@ async fn probe_with_policy(
     let mut failures = 0;
     loop {
         let mut hint = RetryHint::default();
-        match probe_once(inner, url, token, &mut hint).await {
+        match probe_once(inner, url, token, &mut hint, id).await {
             Ok(value) => return Ok(value),
             Err(error)
                 if retryable(&error)
@@ -133,11 +133,13 @@ async fn probe_once(
     url: &str,
     token: &CancellationToken,
     hint: &mut RetryHint,
+    id: Option<DownloadId>,
 ) -> Result<Probe> {
     let _permits = permits(inner, url, token, None, false).await?;
+    let request = inner.request(url, id).await;
     let response = tokio::select! {
         _ = token.cancelled() => return Err(Error::Interrupted),
-        response = inner.client.get(url).header(header::ACCEPT_ENCODING, "identity").header(header::RANGE, "bytes=0-0").send() => response?,
+        response = request.header(header::ACCEPT_ENCODING, "identity").header(header::RANGE, "bytes=0-0").send() => response?,
     };
     let status = response.status().as_u16();
     if matches!(status, 429 | 503) {
@@ -712,8 +714,8 @@ async fn attempt_segment(
         segment.end
     };
     let mut request = inner
-        .client
-        .get(url)
+        .request(url, Some(id))
+        .await
         .header(header::ACCEPT_ENCODING, "identity");
     if download.ranged {
         request = request.header(
@@ -912,9 +914,26 @@ async fn publish(inner: &Inner, id: DownloadId, token: &CancellationToken) -> Re
         return Err(error.into());
     }
     let download = data.downloads.iter_mut().find(|d| d.id == id).unwrap();
-    // Linking publishes atomically without replacing a user's destination file. Both
-    // paths share a directory. A retained link also makes crash recovery unambiguous.
-    if let Err(error) = tokio::fs::hard_link(&download.temporary_path, &download.destination).await
+    let publication_source = crate::storage::publication_source(download);
+    if publication_source != download.temporary_path {
+        if let Ok(metadata) = tokio::fs::symlink_metadata(&publication_source).await
+            && (!metadata.file_type().is_file() || metadata.file_type().is_symlink())
+        {
+            return Err(Error::Invalid(
+                "publication staging path is not a regular file".into(),
+            ));
+        }
+        if let Err(error) =
+            tokio::fs::hard_link(&download.temporary_path, &publication_source).await
+            && (error.kind() != std::io::ErrorKind::AlreadyExists
+                || !same_file::is_same_file(&download.temporary_path, &publication_source)
+                    .unwrap_or(false))
+        {
+            return Err(error.into());
+        }
+    }
+    // Final linking is always same-directory and never replaces the destination.
+    if let Err(error) = tokio::fs::hard_link(&publication_source, &download.destination).await
         && (error.kind() != std::io::ErrorKind::AlreadyExists
             || !same_file::is_same_file(&download.temporary_path, &download.destination)
                 .unwrap_or(false))
@@ -935,6 +954,19 @@ async fn publish(inner: &Inner, id: DownloadId, token: &CancellationToken) -> Re
     if let Err(error) = tokio::fs::remove_file(temporary_path).await {
         let _ = inner.events.send(EngineEvent::Error(format!(
             "completed download temporary-file cleanup failed: {error}"
+        )));
+    }
+    if publication_source
+        != data
+            .downloads
+            .iter()
+            .find(|d| d.id == id)
+            .unwrap()
+            .temporary_path
+        && let Err(error) = tokio::fs::remove_file(publication_source).await
+    {
+        let _ = inner.events.send(EngineEvent::Error(format!(
+            "publication staging cleanup failed: {error}"
         )));
     }
     Ok(())
