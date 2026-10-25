@@ -18,6 +18,32 @@ pub struct Settings {
     pub split_threshold_mib: u64,
     pub max_retries: u32,
     pub default_directory: String,
+    #[serde(default = "default_true")]
+    pub auto_update_check: bool,
+    #[serde(default = "default_true")]
+    pub include_prereleases: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            theme: Theme::Dark,
+            speed_limit_bytes_per_second: 0,
+            max_active_downloads: 3,
+            connections_per_download: 4,
+            max_connections: 12,
+            max_connections_per_host: 8,
+            split_threshold_mib: 16,
+            max_retries: 3,
+            default_directory: String::new(),
+            auto_update_check: true,
+            include_prereleases: true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -132,6 +158,7 @@ mod tests {
             "default_directory":"C:\\Downloads"
         }))
         .unwrap();
+        assert!(settings.auto_update_check && settings.include_prereleases);
         store.save(&settings).await.unwrap();
         let mut invalid = settings.clone();
         invalid.max_active_downloads = 0;

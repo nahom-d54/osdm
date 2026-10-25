@@ -17,6 +17,10 @@ export interface AppSettings {
   max_retries: number;
   /** Last-used download directory for the destination picker default. */
   default_directory: string;
+  /** Check GitHub Releases after launch and every six hours. */
+  auto_update_check: boolean;
+  /** Include alpha/beta GitHub releases in update checks. */
+  include_prereleases: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -29,6 +33,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   split_threshold_mib: 16,
   max_retries: 3,
   default_directory: "",
+  auto_update_check: true,
+  include_prereleases: true,
 };
 
 interface SettingsStore {
@@ -42,6 +48,14 @@ export const useSettings = create<SettingsStore>()(
       settings: DEFAULT_SETTINGS,
       update: (patch) => set((state) => ({ settings: { ...state.settings, ...patch } })),
     }),
-    { name: "osdm.settings" },
+    {
+      name: "osdm.settings",
+      // Older persisted settings predate update fields; merge so upgrades keep
+      // their choices while receiving safe defaults for new ones.
+      merge: (persisted, current) => {
+        const saved = (persisted as { settings?: Partial<AppSettings> } | undefined)?.settings;
+        return { ...current, settings: { ...current.settings, ...(saved ?? {}) } };
+      },
+    },
   ),
 );

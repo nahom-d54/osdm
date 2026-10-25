@@ -242,6 +242,12 @@ async fn engine_cleanup_partial_data(shell: State<'_, Shell>) -> Reply<usize> {
 }
 
 #[tauri::command]
+async fn updates_check(app: AppHandle) -> Reply<()> {
+    updates::check(app);
+    Ok(())
+}
+
+#[tauri::command]
 async fn settings_load(shell: State<'_, Shell>) -> Reply<Option<Settings>> {
     shell.settings.load().await
 }
@@ -389,6 +395,7 @@ pub fn run() {
             engine_cleanup_partial_data,
             settings_load,
             settings_save,
+            updates_check,
             pick_directory,
             default_download_directory,
             path_exists,
@@ -442,6 +449,7 @@ pub fn run() {
             app.state::<Shell>()
                 .tray_available
                 .store(tray_available, Ordering::Release);
+            updates::start_auto_check(app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {

@@ -196,6 +196,11 @@ NSIS installer and the Linux Debian package. Before tagging:
 4. Push the tag, for example `git tag v0.1.0 && git push origin v0.1.0`.
 5. If a package must be added to an existing release, run the release workflow manually with that tag instead of creating a new version.
 
+The in-app updater expects the release assets to keep their platform suffixes
+(`_x64-setup.exe` on Windows, `_amd64.deb` on Linux) and a `SHA256SUMS.txt` entry
+for each package. Windows updates use `/UPDATE`; do not replace that with a plain
+installer launch, which brings back the uninstall-before-upgrade page.
+
 Updater signing is optional until updater artifacts are enabled. When it is
 enabled, configure `TAURI_SIGNING_PRIVATE_KEY` and
 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` as repository secrets and never commit the

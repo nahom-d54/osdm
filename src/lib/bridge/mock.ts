@@ -302,6 +302,10 @@ export class MockBridge implements EngineBridge {
     this.markDirty();
   }
 
+  async checkForUpdates(): Promise<void> {
+    console.info("[mock] update check requested");
+  }
+
   async updateUrl(id: string, raw: string): Promise<void> {
     const url = new URL(raw.trim());
     if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {

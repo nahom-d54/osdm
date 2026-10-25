@@ -74,6 +74,10 @@ export class TauriBridge implements EngineBridge {
     await this.invoke("engine_update_url", { id, url });
   }
 
+  async checkForUpdates(): Promise<void> {
+    await this.invoke("updates_check");
+  }
+
   async cancel(id: string): Promise<void> {
     await this.invoke("engine_cancel", { id });
   }

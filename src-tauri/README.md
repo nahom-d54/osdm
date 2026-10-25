@@ -36,22 +36,29 @@ or credentials. No telemetry is included.
 
 ## Updates
 
-The tray's explicit update action is configuration-gated. For a publisher build,
-set `OSDM_UPDATE_ENDPOINT` and `OSDM_UPDATE_PUBKEY` **before compilation**. The
-endpoint is a standard, static Tauri manifest served over HTTPS. A textual
-Minisign detached signature of the exact JSON bytes must be served at the same
-URL with `.minisig` appended. Its key must match the artifact-signing public key.
+Release builds check `nahom-d54/osdm` on the public GitHub Releases API. The
+checker selects the highest semver release newer than the running build, with an
+optional prerelease filter, then chooses the platform package
+(`*_x64-setup.exe` on Windows, `*_amd64.deb` on Linux). It requires an exact
+`SHA256SUMS.txt` entry and cross-checks the API asset digest when present before
+offering the update. Downloads require explicit consent.
 
-The public key uses Tauri's base64-encoded public-key file representation. Keep
-the private key out of this repository. Use the Tauri signing tooling for the
-installer and Minisign-compatible tooling for the raw manifest signature. Set
-`bundle.createUpdaterArtifacts` in the publisher's Tauri config overlay when
-generating signed release artifacts; the development config does not require a
-signing secret or create unsigned updater output.
+Automatic checks run shortly after launch and every six hours. They can be
+disabled in Settings, where a manual **Check now** action is also available. The
+tray's explicit check uses the same path. No update is installed silently.
 
-The shell rejects unsigned/tampered metadata, refuses non-newer versions,
-requires explicit consent, verifies the package signature, and drains downloads
-before installation. No endpoint or production public key is supplied here.
-Live publisher update and installer-upgrade validation remain release gates.
+On Windows the verified installer is launched as
+`installer.exe /UPDATE /P /R`. `/UPDATE` keeps the existing installation and
+skips the uninstall page, `/P` shows passive progress, and `/R` restarts OSDM
+after installation. The engine is shut down and its queue is saved before the
+app exits. On Linux the verified Debian package is opened in the system software
+installer.
+
+The GitHub path is checksum- and TLS-verified, not publisher-signed. If
+`OSDM_UPDATE_ENDPOINT` and `OSDM_UPDATE_PUBKEY` are set **before compilation**,
+the shell instead uses the signed Tauri manifest path. That path requires a
+standard HTTPS Tauri manifest plus a textual Minisign signature at
+`<endpoint>.minisig`, and verifies both the manifest and artifact before
+installation. Keep the private key out of the repository.
 
 See `docs/bridge-contract.md` for exact command names, casing, and semantics.

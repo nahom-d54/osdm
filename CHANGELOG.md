@@ -4,6 +4,24 @@ All notable changes to OSDM are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2-alpha.1] - 2026-10-25
+
+### Added
+
+- Automatic update checks against public GitHub Releases after launch and every
+  six hours, with optional prerelease inclusion and a manual **Check now** action.
+- Consent-based update downloads verified against the release’s `SHA256SUMS.txt`
+  and GitHub asset digest.
+- In-place Windows updates using `/UPDATE /P /R`; the previous installation is no
+  longer uninstalled before upgrading.
+
+### Changed
+
+- The release workflow now also runs when a GitHub Release is published and can
+  be dispatched manually for an existing tag.
+- Releases now include the Linux Debian package alongside the Windows installer,
+  with one `SHA256SUMS.txt` covering every downloadable asset.
+
 ## [0.1.1-alpha.1] - 2026-10-25
 
 ### Fixed
@@ -17,13 +35,6 @@ All notable changes to OSDM are documented here. This project follows
   they lacked the Common-Controls v6 application manifest.
 
 ## [Unreleased]
-
-### Changed
-
-- The release workflow now also runs when a GitHub Release is published and can
-  be dispatched manually for an existing tag.
-- Releases now include the Linux Debian package alongside the Windows installer,
-  with one `SHA256SUMS.txt` covering every downloadable asset.
 
 ### Planned
 
@@ -79,6 +90,7 @@ First public alpha. Distributed as a Windows NSIS installer.
 - SHA-256 verification requires a trusted reference; a computed hash alone does
   not establish authenticity.
 
-[Unreleased]: https://github.com/nahom-d54/osdm/compare/v0.1.1-alpha.1...HEAD
+[Unreleased]: https://github.com/nahom-d54/osdm/compare/v0.1.2-alpha.1...HEAD
+[0.1.2-alpha.1]: https://github.com/nahom-d54/osdm/releases/tag/v0.1.2-alpha.1
 [0.1.1-alpha.1]: https://github.com/nahom-d54/osdm/releases/tag/v0.1.1-alpha.1
 [0.1.0-alpha.1]: https://github.com/nahom-d54/osdm/releases/tag/v0.1.0-alpha.1

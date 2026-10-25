@@ -73,6 +73,7 @@ camelCase; nested Rust structs retain snake_case. Errors reject with a string.
 | `reveal_path` | `path: string` | `()` |
 | `settings_load` | — | `AppSettings` or `null` |
 | `settings_save` | `settings: AppSettings` | `()` |
+| `updates_check` | — | `()`; opens the native update flow |
 
 `engine_open` is idempotent inside one process (including StrictMode and webview
 reloads). Persisted native settings take precedence over the supplied config;
@@ -143,29 +144,31 @@ asynchronous listener registration finishes.
   settings seed the store. Subsequent changes are mirrored through the bridge.
   Concurrency changes apply on restart; speed changes use the live command.
 
-### Signed updates — implemented, publisher configuration required
+### Updates — GitHub by default, signed manifests optional
 
-Updates are requested explicitly from the tray and require native confirmation
-before downloading/installing. There are no background installs.
+Release builds check the public GitHub Releases API after launch and every six
+hours, or when the user selects **Check now** / the tray action. Checks use the
+saved `include_prereleases` setting, choose the highest newer semver release, and
+require native confirmation before downloading. `updates_check` triggers the same
+manual check without blocking the UI.
 
-Build with:
+The GitHub path requires an HTTPS asset from `github.com` or
+`*.githubusercontent.com`, downloads the platform package, and verifies its exact
+`SHA256SUMS.txt` entry (plus the API asset digest when present). On Windows the
+installer runs with `/UPDATE /P /R`, which upgrades in place without uninstalling
+and restarts OSDM. On Linux the verified `.deb` opens in the software installer.
+The queue is drained and saved before the Windows app exits. No update installs
+without consent.
 
-- `OSDM_UPDATE_ENDPOINT`: HTTPS URL of a standard Tauri JSON update manifest,
-  without query, fragment, credentials, or template substitutions.
-- `OSDM_UPDATE_PUBKEY`: the Tauri/base64-encoded Minisign public-key file.
+If `OSDM_UPDATE_ENDPOINT` and `OSDM_UPDATE_PUBKEY` are set at compile time, the
+signed manifest path takes precedence. The endpoint is an HTTPS Tauri JSON
+manifest without query/fragment/credentials, and `<endpoint>.minisig` must hold a
+Minisign signature of the exact manifest bytes. Both the manifest and artifact
+signature are verified before installation.
 
-Publish a detached, textual Minisign signature of the **exact manifest bytes** at
-`<endpoint>.minisig`, signed by the same publisher key as the update artifact.
-The shell verifies this signature, rejects non-newer versions, and compares the
-updater plugin's independently fetched metadata with the signed document before
-proceeding. The plugin also verifies the artifact signature before installation.
-The queue is shut down before the installer runs. Downloads/settings are stored
-outside the installed application directory.
-
-Without endpoint/key configuration, Check for updates reports that updates are
-unconfigured. Production publishing, signing-key custody, installer upgrade tests,
-and live update delivery are **not claimed available merely because the updater
-code exists**. See `src-tauri/README.md`.
+The GitHub checksum is not a cryptographic publisher signature. Signing-key
+custody, signed release publication, and live signed-update validation remain
+publisher release gates.
 
 ## 4. P1 engine additions — available
 

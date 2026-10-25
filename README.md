@@ -56,6 +56,7 @@ Most downloads fail loudly for ordinary reasons: a server rate-limits a burst of
 - **Integrity before publication.** SHA-256 is computed with bounded memory. Supply the publisher’s checksum when adding a download to get `Verified`; without one, OSDM still reports a `Computed` hash rather than pretending it is proof.
 - **Source replacement.** Change the URL of a paused or failed download without losing its destination. The engine reuses checkpoints only when range support, validator, and length still match.
 - **Desktop workflow.** Add-and-probe flow, queue ordering, pause/resume/retry, per-download details, speed limiting, completion notifications, and close-to-tray behavior.
+- **Automatic GitHub updates.** OSDM checks published GitHub Releases after launch and every six hours, can include prereleases, and downloads only after confirmation. Packages are checked against the release’s `SHA256SUMS.txt`. Windows updates install in place with `/UPDATE`, so the previous installation is not uninstalled.
 - **Local-first by default.** No telemetry. The queue lives in a local SQLite database, and the engine is independent of the desktop shell.
 
 The adaptive connection, recovery, and integrity foundation is implemented. Mirror intelligence, per-download priorities, storage reservations, duplicate detection, predictive scheduling, automatic organization, and media detection are planned in [the phased roadmap](docs/intelligent-downloads.md).
@@ -65,6 +66,8 @@ The adaptive connection, recovery, and integrity foundation is implemented. Mirr
 OSDM ships a **Windows 10/11** NSIS installer and a **Linux Debian package** for Ubuntu 24.04 and newer. Open this repository’s **Releases** page and download the matching package plus `SHA256SUMS.txt`.
 
 Release builds are produced automatically from version tags, from published GitHub Releases, or from a manual workflow run. Verify the downloaded asset hash before running it. Builds from source are described below.
+
+Installed builds check for updates through **Settings → Updates** and the tray menu. On Windows, in-app updates run the installer with `/UPDATE`, upgrade the existing installation in place, and restart OSDM. If you run a downloaded setup manually, select **Don’t uninstall** on the upgrade page or launch it with `/UPDATE` to keep the current installation.
 
 ## Build from source
 
@@ -146,7 +149,8 @@ Keep the version in `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri
 - The local database contains full source URLs, including signed query strings. Treat `downloads.db` as a secret and never attach it to an issue.
 - Network errors omit request URLs.
 - Existing destination files are never overwritten.
-- Update manifests and installers are verified against a build-time publisher key when updates are configured.
+- GitHub updates require explicit consent, use HTTPS, and are verified against the release’s `SHA256SUMS.txt` before they can run. Checksums are not a publisher signature; signed-manifest updates are used when a publisher configures them.
+- The Windows installer is not code-signed yet, so SmartScreen may warn.
 
 Please report security-sensitive findings privately to the maintainers rather than in a public issue.
 

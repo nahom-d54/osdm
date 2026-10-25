@@ -63,6 +63,17 @@ Do not search or edit `target/`, `node_modules/`, `dist/`, or `src-tauri/gen/`.
 10. Do not present planned features as shipped. Update
     `docs/intelligent-downloads.md` when scope changes.
 
+## Updates
+
+- Release builds check public GitHub Releases; never install without explicit
+  consent or without verifying the matching `SHA256SUMS.txt` entry.
+- Windows updates must launch the NSIS installer with `/UPDATE /P /R` so the
+  existing installation is upgraded in place instead of uninstalled.
+- Keep release asset suffixes compatible with the updater
+  (`_x64-setup.exe`, `_amd64.deb`) and publish `SHA256SUMS.txt`.
+- The signed-manifest path remains available when `OSDM_UPDATE_ENDPOINT` and
+  `OSDM_UPDATE_PUBKEY` are configured at build time.
+
 ## Change workflow
 
 - Keep engine protocol/state logic out of `src-tauri/`; commands validate and

@@ -1,4 +1,4 @@
-import { FolderOpen, Monitor, Moon, Sun } from "lucide-react";
+import { FolderOpen, Monitor, Moon, RefreshCw, Sun } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { NumberInput } from "@/components/ui/number-input";
 import { Separator } from "@/components/ui/separator";
+import { Toggle } from "@/components/ui/toggle";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { getBridge } from "@/lib/bridge";
 import type { ThemeChoice } from "@/store/settings";
@@ -181,8 +182,49 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
           </p>
         </section>
 
+        <Separator />
+
+        <section>
+          <div className="flex items-baseline justify-between gap-2">
+            <h3 className="eyebrow">Updates</h3>
+            <Button variant="ghost" size="sm" onClick={() => void getBridge().checkForUpdates()}>
+              <RefreshCw strokeWidth={1.75} />
+              Check now
+            </Button>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-4">
+            <Field
+              label="Automatic checks"
+              hint="Check GitHub Releases after launch and every six hours."
+            >
+              <Toggle
+                size="sm"
+                pressed={settings.auto_update_check}
+                onPressedChange={(pressed) => update({ auto_update_check: pressed })}
+                aria-label="Automatic update checks"
+              >
+                {settings.auto_update_check ? "On" : "Off"}
+              </Toggle>
+            </Field>
+            <Field label="Prereleases" hint="Include alpha and beta versions.">
+              <Toggle
+                size="sm"
+                pressed={settings.include_prereleases}
+                onPressedChange={(pressed) => update({ include_prereleases: pressed })}
+                aria-label="Include prerelease updates"
+              >
+                {settings.include_prereleases ? "On" : "Off"}
+              </Toggle>
+            </Field>
+          </div>
+          <p className="mt-3 rounded-md border border-line-soft px-3 py-2 text-[10.5px] leading-relaxed text-muted-foreground">
+            Updates are downloaded only after you confirm. Packages are verified against the
+            release’s SHA256SUMS.txt. Windows updates install in place and restart OSDM.
+          </p>
+        </section>
+
         <div className="flex items-center justify-between pt-1 font-mono text-[8.5px] uppercase tracking-[0.1em] text-faint">
-          <span>OSDM 0.1.0-alpha</span>
+          <span>OSDM alpha</span>
           <span>Local engine · no telemetry</span>
         </div>
       </div>
