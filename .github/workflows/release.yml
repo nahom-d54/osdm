@@ -49,6 +49,13 @@ jobs:
           package_version=$(jq -r .version package.json)
           cargo_version=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
           engine_version=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/download-engine/Cargo.toml | head -1)
+          for crate in cli browser-bridge; do
+            tool_version=$(sed -n 's/^version = "\(.*\)"/\1/p' "crates/$crate/Cargo.toml" | head -1)
+            if [[ "$tool_version" != "$version" ]]; then
+              echo "Version mismatch in crates/$crate/Cargo.toml" >&2
+              exit 1
+            fi
+          done
           if [[ "$package_version" != "$version" || "$cargo_version" != "$version" || "$engine_version" != "$version" ]]; then
             echo "Version mismatch: tauri.conf.json=$version package.json=$package_version src-tauri/Cargo.toml=$cargo_version crates/download-engine/Cargo.toml=$engine_version" >&2
             exit 1
@@ -75,7 +82,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run engine tests
-        run: cargo test --locked -p download-engine
+        run: cargo test --locked -p download-engine -p osdm-cli -p osdm-browser-bridge
 
   windows:
     name: Build Windows installer
@@ -112,6 +119,26 @@ jobs:
 
       - name: Build Windows installer
         run: pnpm tauri build --bundles nsis
+
+      - name: Build capture and automation tools
+        shell: pwsh
+        run: |
+          cargo build --locked --release -p osdm-cli -p osdm-browser-bridge
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm test:extension
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Path capture-tools | Out-Null
+          Copy-Item target/release/osdm-cli.exe,target/release/osdm-native-host.exe capture-tools/
+          Copy-Item -Recurse extension capture-tools/extension
+          Copy-Item crates/cli/README.md capture-tools/CLI.md
+          Compress-Archive -Path capture-tools/* -DestinationPath "osdm-capture-tools_${env:RELEASE_TAG}_x64.zip"
+
+      - name: Upload Windows capture tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-capture-tools
+          path: osdm-capture-tools_*.zip
+          if-no-files-found: error
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
@@ -171,6 +198,22 @@ jobs:
 
       - name: Build Debian package
         run: pnpm tauri build --bundles deb
+
+      - name: Build capture and automation tools
+        run: |
+          cargo build --locked --release -p osdm-cli -p osdm-browser-bridge
+          mkdir capture-tools
+          cp target/release/osdm-cli target/release/osdm-native-host capture-tools/
+          cp -r extension capture-tools/extension
+          cp crates/cli/README.md capture-tools/CLI.md
+          tar -czf "osdm-capture-tools_${RELEASE_TAG}_amd64.tar.gz" -C capture-tools .
+
+      - name: Upload Linux capture tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-capture-tools
+          path: osdm-capture-tools_*.tar.gz
+          if-no-files-found: error
 
       - name: Upload Linux package
         uses: actions/upload-artifact@v4

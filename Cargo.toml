@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/download-engine", "src-tauri"]
+members = ["crates/download-engine", "crates/cli", "crates/browser-bridge", "src-tauri"]
 default-members = ["crates/download-engine"]
 resolver = "2"
 

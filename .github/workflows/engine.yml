@@ -19,6 +19,8 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked -p download-engine --all-targets -- -D warnings
       - run: cargo test --locked -p download-engine
+      - run: cargo clippy --locked -p osdm-cli -p osdm-browser-bridge --all-targets -- -D warnings
+      - run: cargo test --locked -p osdm-cli -p osdm-browser-bridge
 
   desktop:
     runs-on: windows-latest
@@ -38,6 +40,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm test
+      - run: pnpm test:extension
       - run: pnpm exec playwright install chromium
       - run: pnpm test:ui
       - run: cargo clippy --locked -p osdm-desktop --all-targets -- -D warnings

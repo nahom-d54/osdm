@@ -82,6 +82,23 @@ export interface DownloadProperties {
 /** Input only, session-only. Never store this in Zustand persistence. */
 export interface BasicCredentials { username: string; password: string }
 
+export interface DownloadQueue { id: string; name: string; running: boolean; stop_at: number | null; synchronize?: boolean; checking_sources?: boolean; last_error?: string | null }
+export interface QueueSchedule {
+  id: string; queue_id: string; next_run: number; interval_seconds: number | null;
+  stop_after_seconds: number | null; run_once_on_startup: boolean; enabled: boolean;
+}
+export interface Automation { queues: DownloadQueue[]; schedules: QueueSchedule[]; membership: Record<string, string>; pending_captures?: Record<string, number> }
+export type AutomationCommand =
+  | { action: "save_queue"; id: string; name: string }
+  | { action: "delete_queue" | "start" | "stop" | "delete_schedule"; id: string }
+  | { action: "assign"; ids: string[]; queue_id: string | null }
+  | { action: "set_synchronization"; id: string; enabled: boolean }
+  | { action: "save_schedule"; schedule: QueueSchedule };
+export interface BatchItem { request: DownloadRequest; queue_id: string | null }
+export interface BatchResult { index: number; id: string | null; duplicate: boolean; error: string | null }
+export type CompletionAction = { kind: "shutdown" } | { kind: "disconnect"; connection: string };
+export interface PowerPlan { queue_id: string; action: CompletionAction; deadline: number | null }
+
 /** Metadata returned by a pre-download probe; no queue entry is created. */
 export interface UrlProbe {
   /** URL after redirects. */

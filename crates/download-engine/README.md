@@ -76,8 +76,9 @@ The database contains full source URLs, including signed query strings. Do not p
 
 ## Current limits
 
-- Direct URLs only; no browser cookies, custom authentication headers beyond explicit
-  session-only Basic auth, proxy configuration, or media extraction.
+- Direct URLs only; explicit session-only Basic auth and origin-scoped captured
+  Cookie/Authorization headers are supported. There is no automatic browser-cookie
+  export, persistent custom headers, proxy configuration, or media extraction.
 - No HTTP response cache: file bodies are streamed to disk once, and durable checkpoints already avoid re-fetching committed ranges.
 - SHA-256 verification needs a trustworthy reference supplied by the user/publisher. Computing a hash alone does not establish authenticity; chunk-level corruption cannot be localized without trusted per-chunk hashes.
 - Partial cleanup is explicit, not automatic. Unrecorded `.part` files are left alone.
@@ -86,10 +87,37 @@ The database contains full source URLs, including signed query strings. Do not p
 - Changing the bandwidth limit wakes existing throttle waits; low-speed transfers remain cancellable.
 - Durable segment layouts remain fixed while request sizes and active connections adapt. Dynamic work stealing is not implemented; instantaneous speed/ETA may fluctuate.
 - Server validators must be truthful. Last-Modified has weaker identity guarantees than strong ETags.
-- Schema revision 4 adds organization metadata and custom working-directory ownership;
+- Schema revision 5 adds durable queue/schedule/capture decisions; older binaries
+  reject it rather than bypass unattended-work policy. Revision 4 adds organization metadata and custom working-directory ownership;
   revision 3 added integrity requirements. Revisions 0–3 migrate transactionally with
-  safe defaults; newer revisions are rejected. Older engines reject revision 4 rather
+  safe defaults (revision 4 also migrates to 5); newer revisions are rejected. Older engines reject revision 5 rather
   than losing metadata/storage ownership. Downgrading requires a compatible backup.
+
+## Capture and automation
+
+`enqueue_batch` accepts explicit requests with optional queue assignments, returns
+per-item durable IDs/duplicate/error codes, and never infers content identity from
+a name. `automation` / `configure_automation` provide named queues, assignments,
+start/stop, and persisted UTC schedule slots. Schedule policy and tests are in
+[`docs/p2-validation.md`](../../docs/p2-validation.md). Stop/shutdown drain transfer
+workers and synchronization probes; all network waits remain cancellable.
+
+Synchronization is opt-in per queue. Completed sources with matching validators
+and lengths need no new transfer; changes/unverifiable identity publish a **new
+revision filename**, preserving every existing copy. In-place replacement is not
+implemented yet. The approved [replacement policy](../../docs/synchronization-replacement.md)
+permits an explicit synchronization-only exception for unchanged OSDM-owned files;
+ordinary downloads retain conflict detection. Expected checksums are not copied
+to a changed version; new revisions
+are computed, not falsely marked publisher-verified.
+
+`prepare_capture`, `commit_capture`, and `abort_capture` implement durable,
+nonrunnable, expiring browser handoff intent. `set_captured_headers` accepts only
+explicit memory-only per-origin headers for a prepared/paused transfer. Ordinary
+resume cannot bypass a pending handoff. The desktop owns native browser transport,
+startup registration, and opt-in completion actions; transfer protocol/state stays
+here. `shutdown_if_idle` atomically refuses runnable work or pending handoffs before
+final shutdown so a completion action cannot interrupt a racing enqueue.
 
 ## Testing
 

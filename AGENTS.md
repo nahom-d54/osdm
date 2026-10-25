@@ -44,8 +44,16 @@ Do not search or edit `target/`, `node_modules/`, `dist/`, or `src-tauri/gen/`.
 
 ## Non-negotiable engine invariants
 
-1. Never overwrite an existing destination file. Publication is a same-directory
-   hard link with conflict detection.
+1. Never overwrite an existing destination during an ordinary download. Initial
+   publication remains a same-directory hard link with conflict detection.
+   Explicitly enabled synchronization may replace an unchanged OSDM-owned file
+   at its existing path, but only after verifying ownership, file identity, and
+   the last published content. Persist replacement intent first; stage and verify
+   the new file separately, retain a recoverable old copy until completion is
+   durable, and use a tested atomic replacement protocol. Reject unrelated,
+   user-modified, or concurrently changed files. Never stream into or truncate
+   the existing destination. See `docs/synchronization-replacement.md`; this
+   policy exception does not mean replacement is implemented.
 2. Persist intent before destructive filesystem work. Invalidate durable offsets
    before truncating or reusing a temporary file.
 3. Checkpoint — flush plus sync — before advancing committed bytes in SQLite.
@@ -95,6 +103,8 @@ versions identical:
 
 - `package.json`
 - `crates/download-engine/Cargo.toml`
+- `crates/cli/Cargo.toml`
+- `crates/browser-bridge/Cargo.toml`
 - `src-tauri/Cargo.toml`
 - `src-tauri/tauri.conf.json`
 

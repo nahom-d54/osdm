@@ -1654,21 +1654,21 @@ async fn schema_initializes_and_rejects_newer_or_corrupt_databases() {
     let engine = Engine::open(&fresh, config()).await.unwrap();
     engine.shutdown().await.unwrap();
     drop(engine);
-    assert_eq!(database_version(&fresh).await, 4);
+    assert_eq!(database_version(&fresh).await, 5);
 
     let unversioned = dir.path().join("unversioned.db");
     create_database(&unversioned, 0, None).await;
     let engine = Engine::open(&unversioned, config()).await.unwrap();
     engine.shutdown().await.unwrap();
     drop(engine);
-    assert_eq!(database_version(&unversioned).await, 4);
+    assert_eq!(database_version(&unversioned).await, 5);
 
     let revision_two = dir.path().join("revision-two.db");
     create_database(&revision_two, 2, None).await;
     let engine = Engine::open(&revision_two, config()).await.unwrap();
     engine.shutdown().await.unwrap();
     drop(engine);
-    assert_eq!(database_version(&revision_two).await, 4);
+    assert_eq!(database_version(&revision_two).await, 5);
 
     let legacy = dir.path().join("legacy-download.db");
     let payload = serde_json::json!({
@@ -1702,10 +1702,10 @@ async fn schema_initializes_and_rejects_newer_or_corrupt_databases() {
     );
     engine.shutdown().await.unwrap();
     drop(engine);
-    assert_eq!(database_version(&legacy).await, 4);
+    assert_eq!(database_version(&legacy).await, 5);
 
     let newer = dir.path().join("newer.db");
-    create_database(&newer, 5, None).await;
+    create_database(&newer, 6, None).await;
     let error = match Engine::open(&newer, config()).await {
         Ok(_) => panic!("newer schema was accepted"),
         Err(error) => error,

@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "OSDM capture",
+  "version": "0.1.0",
+  "description": "Send explicitly selected links and eligible downloads to your local OSDM application.",
+  "permissions": ["nativeMessaging", "contextMenus", "downloads", "storage", "activeTab", "scripting", "notifications"],
+  "optional_permissions": ["cookies"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "background": { "scripts": ["background.js"], "type": "module" },
+  "action": { "default_popup": "options.html" },
+  "browser_specific_settings": { "gecko": { "id": "osdm@osdm.app", "strict_min_version": "142.0", "data_collection_permissions": { "required": ["none"] } } }
+}

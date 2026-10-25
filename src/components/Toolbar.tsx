@@ -26,6 +26,8 @@ export function Toolbar({ searchRef, onAdd }: ToolbarProps) {
     downloads,
     view,
     categoryFilter,
+    queueFilter,
+    automation,
     query,
     setQuery,
     pauseAll,
@@ -61,6 +63,7 @@ export function Toolbar({ searchRef, onAdd }: ToolbarProps) {
   const visible = downloads.filter((download) => {
     if (!matchesView(view, download)) return false;
     if (categoryFilter != null && (download.properties?.category_id ?? "") !== categoryFilter) return false;
+    if (queueFilter != null && (automation.membership[download.id] ?? "") !== queueFilter) return false;
     return matchesQuery(download, query);
   });
   const searching = query.trim() !== "";
@@ -71,7 +74,7 @@ export function Toolbar({ searchRef, onAdd }: ToolbarProps) {
     if (searching) {
       return `${plural(visible.length, "match", "matches")} for “${query.trim()}”`;
     }
-    if (categoryFilter != null) return plural(visible.length, "download");
+    if (categoryFilter != null || queueFilter != null) return plural(visible.length, "download");
     switch (view) {
       case "unfinished":
         return plural(downloads.filter((download) => download.state !== "Completed").length, "unfinished download");
@@ -117,7 +120,7 @@ export function Toolbar({ searchRef, onAdd }: ToolbarProps) {
         <div className="min-w-0 flex-1">
           <div className="eyebrow">{groupFor(view)}</div>
           <h1 className="mt-1.5 font-display text-[27px] font-semibold leading-none tracking-[-0.035em] text-ink-strong">
-            {categoryFilter == null ? VIEW_COPY[view].title : categoryFilter === "" ? "General" : categories.find((category) => category.id === categoryFilter)?.name ?? "Deleted category"}
+            {queueFilter != null ? automation.queues.find((q) => q.id === queueFilter)?.name ?? "General queue" : categoryFilter == null ? VIEW_COPY[view].title : categoryFilter === "" ? "General" : categories.find((category) => category.id === categoryFilter)?.name ?? "Deleted category"}
           </h1>
           <p className="mt-2 flex items-center gap-2 text-[11.5px] text-muted-foreground">
             <span

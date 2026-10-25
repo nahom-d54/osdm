@@ -118,6 +118,6 @@ async fn revision_three_upgrade_supplies_metadata_defaults_and_blocks_older_writ
         .unwrap();
     // The revision-three engine's admission check is 0..=3. It rejects this DB.
     assert!(!(0..=3).contains(&version));
-    assert_eq!(version, 4);
+    assert_eq!(version, 5);
     pool.close().await;
 }

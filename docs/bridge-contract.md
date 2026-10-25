@@ -1,4 +1,4 @@
-# P1 bridge and engine contract — available implementation
+# Desktop bridge and engine contract — available implementation
 
 The native bridge is implemented in `src-tauri/src/lib.rs`. The frontend selects
 `TauriBridge` inside Tauri and `MockBridge` in an ordinary browser. The Rust
@@ -335,3 +335,59 @@ ID, Completed state, and existing regular file, and uses Copy mode only.
 
 See `docs/p1-validation.md` for restrictions and native checks that automated
 bridge/browser tests do not replace. Localization is skipped by user decision.
+
+## 7. P2 capture and automation — source implementation
+
+The transfer seam remains `download-engine`. Both bridge adapters expose:
+
+| Command | Arguments | Result |
+| --- | --- | --- |
+| `engine_enqueue_batch` | `items: {request: DownloadRequest, queue_id: UUID \| null}[], startPaused: boolean` | `{index,id: UUID \| null,duplicate,error: string \| null}[]` |
+| `engine_automation` | — | `Automation` |
+| `engine_configure_automation` | `command: AutomationCommand` | `Automation` |
+| `capture_status` / `capture_enable` | — / `enabled: boolean` | boolean / `()` |
+| `desktop_autostart_status` / `desktop_autostart` | — / `enabled: boolean` | boolean / `()` |
+| `power_status` | — | `{queue_id,action,deadline: UTC seconds \| null}` or null |
+| `power_arm` | `queueId: UUID, action: {kind:"shutdown"} \| {kind:"disconnect",connection:string}, consent: true` | `()` |
+| `power_cancel` | — | `()` |
+| `power_acknowledge` | — | `()`; visible countdown UI heartbeat; hidden/minimized or unresponsive UI cancels the action |
+
+`Automation` contains `queues`, `schedules`, download→queue `membership`, internal
+download→expiry `pending_captures`, and revision→source `sync_roots`. Queue fields
+are `{id,name,running,stop_at,synchronize,checking_sources,last_error}`. Schedule
+fields are `{id,queue_id,next_run,interval_seconds,stop_after_seconds,
+run_once_on_startup,enabled}`. IDs are UUIDs, time fields UTC seconds. Commands use
+an `action` discriminator: `save_queue {id,name}`, `delete_queue {id}`,
+`assign {ids,queue_id}`, `set_synchronization {id,enabled}`,
+`save_schedule {schedule}`, `delete_schedule {id}`, `start {id}`, `stop {id}`.
+
+Queue/schedule writes and all affected download states commit in one SQLite
+transaction before live mutation, cancellation, or transfer admission. Schema
+**5** migrates revisions 0–4 transactionally and forces older binaries to reject
+the database rather than bypass schedules/capture intent. Existing entries remain
+in General. Source URLs stay in Download records; automation contains only IDs,
+policy, timing, and safe status text. Duplicate identity is normalized URL and
+canonical destination/checksum, not filename/size or inferred content identity.
+Batch admits 1–1,000 items independently, reports partial failures, and retains an
+ID even if a later assignment/resume fails. Retry does not create another entry.
+
+`Engine::prepare_capture` atomically inserts a paused download with a 30-second
+lease. Ordinary resume/queue start cannot admit that lease. Commit consumes the
+lease and queues the ID in one transaction; abort/expiry removes only a pending,
+nonrunnable capture. Captured Cookie/Authorization/User-Agent inputs are validated,
+origin-scoped and memory-only, never part of serde Download or settings. They
+clear on source replacement, cancel, completion, removal and shutdown. The browser
+native host never owns or opens the engine database. Its authenticated endpoint
+and protocol are documented in `extension/README.md`.
+
+The native app remains authoritative. UI queues poll engine automation snapshots;
+the mock simulates queues/UTC windows but refuses native credentials, browser
+registration, remote revision checks and power actions instead of inventing those
+results. `shutdown_if_idle` atomically refuses active work, source checks and
+pending browser handoffs before quiescing; it is used for opt-in completion actions.
+Power actions are session-only and require a visible 60-second countdown. Real
+platform execution also requires a fresh visible-window UI heartbeat; hiding,
+minimizing, or losing the countdown UI cancels the action rather than shutting
+down silently. The main webview disables Tauri's native drop handler so Windows
+HTML5 URL drops reach the reviewed desktop capture surface.
+Real platform validation and current policy limits: `docs/p2-validation.md`.

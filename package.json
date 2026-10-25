@@ -12,6 +12,8 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test src/lib/*.test.mjs",
+    "test:extension": "node --test extension/*.test.mjs",
+    "test:native-browser": "powershell -NoProfile -ExecutionPolicy Bypass -File tests/native-browser/run.ps1",
     "test:ui": "pnpm build && playwright test",
     "preview": "vite preview"
   },
@@ -39,7 +41,8 @@
     "@vitejs/plugin-react": "^5.0.0",
     "tailwindcss": "^4.1.11",
     "typescript": "~5.9.2",
-    "vite": "^7.0.0"
+    "vite": "^7.0.0",
+    "web-ext": "10.8.0"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

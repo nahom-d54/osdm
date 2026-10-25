@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 
 /// Windows compares destination names without regard to case. Compare the reserved
 /// destination the same way so `File.bin` and `file.bin` cannot both enter the queue.
-fn same_destination(left: &Path, right: &Path) -> bool {
+pub(crate) fn same_destination(left: &Path, right: &Path) -> bool {
     if left == right {
         return true;
     }
@@ -46,6 +46,15 @@ pub struct Engine {
     pub(crate) inner: Arc<Inner>,
 }
 
+struct Admission {
+    properties: DownloadProperties,
+    start_paused: bool,
+    credentials: Option<BasicCredentials>,
+    temporary_directory: Option<std::path::PathBuf>,
+    capture: bool,
+    sync: Option<(DownloadId, DownloadId, CancellationToken)>,
+}
+
 fn validate_credentials(url: &reqwest::Url, credentials: Option<&BasicCredentials>) -> Result<()> {
     if let Some(credentials) = credentials {
         if credentials.username.len() > 1024
@@ -71,7 +80,9 @@ fn validate_credentials(url: &reqwest::Url, credentials: Option<&BasicCredential
 
 pub(crate) struct Data {
     pub downloads: Vec<Download>,
+    pub automation: Automation,
     pub running: HashMap<DownloadId, CancellationToken>,
+    pub synchronizing: HashMap<DownloadId, CancellationToken>,
     pub stopped: bool,
 }
 
@@ -80,8 +91,10 @@ pub(crate) struct Inner {
     pub data: Mutex<Data>,
     pub store: Store,
     pub config: Config,
+    pub schedules_enabled: bool,
     pub client: reqwest::Client,
     pub credentials: Mutex<HashMap<DownloadId, (String, BasicCredentials)>>,
+    pub captured_headers: Mutex<HashMap<DownloadId, (String, CapturedHeaders)>>,
     pub connections: Arc<Semaphore>,
     pub hosts: Mutex<HashMap<String, Arc<adaptive::Host>>>,
     pub download_hosts: Mutex<HashMap<DownloadId, Arc<adaptive::Host>>>,
@@ -94,7 +107,23 @@ pub(crate) struct Inner {
 
 impl Inner {
     pub async fn request(&self, url: &str, id: Option<DownloadId>) -> reqwest::RequestBuilder {
-        let request = self.client.get(url);
+        let mut request = self.client.get(url);
+        let headers = self.captured_headers.lock().await;
+        if let Some((origin, secret)) = id.and_then(|id| headers.get(&id))
+            && reqwest::Url::parse(url)
+                .is_ok_and(|url| url.origin().ascii_serialization() == *origin)
+        {
+            if let Some(value) = &secret.cookie {
+                request = request.header(reqwest::header::COOKIE, value);
+            }
+            if let Some(value) = &secret.authorization {
+                request = request.header(reqwest::header::AUTHORIZATION, value);
+            }
+            if let Some(value) = &secret.user_agent {
+                request = request.header(reqwest::header::USER_AGENT, value);
+            }
+        }
+        drop(headers);
         let credentials = self.credentials.lock().await;
         if let Some((origin, secret)) = id.and_then(|id| credentials.get(&id))
             && reqwest::Url::parse(url)
@@ -135,6 +164,20 @@ impl Inner {
 impl Engine {
     /// Requires a Tokio runtime. Use one engine per database and call shutdown before reopening.
     pub async fn open(database: impl AsRef<Path>, config: Config) -> Result<Self> {
+        Self::open_inner(database, config, true).await
+    }
+
+    /// Short-lived command owners perform housekeeping but do not dispatch saved
+    /// schedules merely because a script listed or added a deferred request.
+    pub async fn open_for_commands(database: impl AsRef<Path>, config: Config) -> Result<Self> {
+        Self::open_inner(database, config, false).await
+    }
+
+    async fn open_inner(
+        database: impl AsRef<Path>,
+        config: Config,
+        schedules_enabled: bool,
+    ) -> Result<Self> {
         config.validate()?;
         let database = if database.as_ref().exists() {
             std::fs::canonicalize(database.as_ref())?
@@ -163,6 +206,14 @@ impl Engine {
             Error::Invalid("database is already owned by another engine or cannot be locked".into())
         })?;
         let store = Store::open(&database).await?;
+        let mut automation = store.load_automation().await?;
+        automation.validate()?;
+        // Recovery never restarts transfers merely because a queue was running.
+        for queue in &mut automation.queues {
+            queue.running = false;
+            queue.checking_sources = false;
+            queue.stop_at = None;
+        }
         let mut downloads = store.load().await?;
         for (position, download) in downloads.iter_mut().enumerate() {
             if matches!(
@@ -202,16 +253,46 @@ impl Engine {
             cooldowns: retry::Cooldowns::default(),
             data: Mutex::new(Data {
                 downloads,
+                automation,
                 running: HashMap::new(),
+                synchronizing: HashMap::new(),
                 stopped: false,
             }),
             store,
             config,
+            schedules_enabled,
             client,
             credentials: Mutex::new(HashMap::new()),
+            captured_headers: Mutex::new(HashMap::new()),
             events,
         });
         let weak = Arc::downgrade(&inner);
+        let automation_weak = weak.clone();
+        tokio::spawn(async move {
+            let mut startup = true;
+            let mut tick = tokio::time::interval(Duration::from_secs(1));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tick.tick().await;
+                let Some(inner) = automation_weak.upgrade() else {
+                    break;
+                };
+                if inner.data.lock().await.stopped {
+                    break;
+                }
+                let engine = Engine { inner };
+                if let Err(error) = engine
+                    .automation_tick(crate::automation::unix_now(), startup)
+                    .await
+                {
+                    let _ = engine
+                        .inner
+                        .events
+                        .send(EngineEvent::Error(error.to_string()));
+                }
+                startup = false;
+            }
+        });
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_millis(250));
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -333,6 +414,66 @@ impl Engine {
         credentials: Option<BasicCredentials>,
         temporary_directory: Option<std::path::PathBuf>,
     ) -> Result<DownloadId> {
+        self.admit(
+            request,
+            Admission {
+                properties,
+                start_paused,
+                credentials,
+                temporary_directory,
+                capture: false,
+                sync: None,
+            },
+        )
+        .await
+    }
+
+    pub async fn prepare_capture(&self, request: DownloadRequest) -> Result<DownloadId> {
+        self.admit(
+            request,
+            Admission {
+                properties: DownloadProperties::default(),
+                start_paused: true,
+                credentials: None,
+                temporary_directory: None,
+                capture: true,
+                sync: None,
+            },
+        )
+        .await
+    }
+
+    pub(crate) async fn enqueue_sync_revision(
+        &self,
+        request: DownloadRequest,
+        properties: DownloadProperties,
+        queue: DownloadId,
+        root: DownloadId,
+        token: CancellationToken,
+    ) -> Result<DownloadId> {
+        self.admit(
+            request,
+            Admission {
+                properties,
+                start_paused: false,
+                credentials: None,
+                temporary_directory: None,
+                capture: false,
+                sync: Some((queue, root, token)),
+            },
+        )
+        .await
+    }
+
+    async fn admit(&self, request: DownloadRequest, admission: Admission) -> Result<DownloadId> {
+        let Admission {
+            properties,
+            start_paused,
+            credentials,
+            temporary_directory,
+            capture,
+            sync,
+        } = admission;
         properties.validate()?;
         let url = validated_url(&request.url)?;
         validate_credentials(&url, credentials.as_ref())?;
@@ -392,10 +533,33 @@ impl Engine {
             ranged: false,
             ready_to_publish: false,
         };
-        self.inner
-            .store
-            .save(&download, data.downloads.len())
-            .await?;
+        if capture || sync.is_some() {
+            let mut next = data.automation.clone();
+            if capture {
+                next.pending_captures
+                    .insert(id, crate::automation::unix_now().saturating_add(30));
+            }
+            if let Some((queue, root, token)) = sync {
+                if token.is_cancelled()
+                    || next.membership.get(&root) != Some(&queue)
+                    || !next.queues.iter().any(|q| q.id == queue && q.running)
+                {
+                    return Err(Error::Interrupted);
+                }
+                next.membership.insert(id, queue);
+                next.sync_roots.insert(id, root);
+            }
+            self.inner
+                .store
+                .save_capture(&download, data.downloads.len(), &next)
+                .await?;
+            data.automation = next;
+        } else {
+            self.inner
+                .store
+                .save(&download, data.downloads.len())
+                .await?;
+        }
         data.downloads.push(download);
         if let Some(credentials) = credentials {
             self.inner
@@ -441,14 +605,21 @@ impl Engine {
             self.inner.save(&data, id).await?;
             if cancel {
                 self.inner.credentials.lock().await.remove(&id);
+                self.inner.captured_headers.lock().await.remove(&id);
             }
         }
         self.wait_idle(id).await;
         Ok(())
     }
 
-    async fn wait_idle(&self, id: DownloadId) {
+    pub(crate) async fn wait_idle(&self, id: DownloadId) {
         while self.inner.data.lock().await.running.contains_key(&id) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    pub(crate) async fn wait_sync_idle(&self, id: DownloadId) {
+        while self.inner.data.lock().await.synchronizing.contains_key(&id) {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
@@ -457,6 +628,11 @@ impl Engine {
         let mut data = self.inner.data.lock().await;
         if data.stopped {
             return Err(Error::Shutdown);
+        }
+        if data.automation.pending_captures.contains_key(&id) {
+            return Err(Error::Invalid(
+                "browser capture awaits handoff confirmation".into(),
+            ));
         }
         let download = data
             .downloads
@@ -645,6 +821,7 @@ impl Engine {
         self.inner.store.save(&download, position).await?;
         data.downloads[position] = download;
         self.inner.credentials.lock().await.remove(&id);
+        self.inner.captured_headers.lock().await.remove(&id);
         Ok(())
     }
 
@@ -677,7 +854,40 @@ impl Engine {
     }
 
     /// Pauses all work and waits for workers to drain. This engine cannot be restarted.
+    pub async fn shutdown_if_idle(&self) -> Result<bool> {
+        {
+            let mut data = self.inner.data.lock().await;
+            if !data.running.is_empty()
+                || !data.synchronizing.is_empty()
+                || !data.automation.pending_captures.is_empty()
+                || data.downloads.iter().any(|d| {
+                    matches!(
+                        d.state,
+                        DownloadState::Queued
+                            | DownloadState::Downloading
+                            | DownloadState::Pausing
+                            | DownloadState::Canceling
+                    )
+                })
+            {
+                return Ok(false);
+            }
+            data.stopped = true;
+        }
+        self.shutdown().await?;
+        Ok(true)
+    }
+
+    /// Pauses all work and waits for workers to drain. This engine cannot be restarted.
     pub async fn shutdown(&self) -> Result<()> {
+        let synchronizing: Vec<_> = {
+            let mut data = self.inner.data.lock().await;
+            data.stopped = true;
+            for token in data.synchronizing.values() {
+                token.cancel();
+            }
+            data.synchronizing.keys().copied().collect()
+        };
         let ids = {
             let mut data = self.inner.data.lock().await;
             data.stopped = true;
@@ -702,6 +912,9 @@ impl Engine {
         for id in ids {
             self.wait_idle(id).await;
         }
+        for id in synchronizing {
+            self.wait_sync_idle(id).await;
+        }
         let data = self.inner.data.lock().await;
         let mut ownership = self.inner.database_lock.lock().await;
         if ownership.is_none() {
@@ -711,6 +924,7 @@ impl Engine {
             self.inner.store.save(download, position).await?;
         }
         self.inner.credentials.lock().await.clear();
+        self.inner.captured_headers.lock().await.clear();
         ownership.take();
         Ok(())
     }
@@ -757,6 +971,7 @@ async fn run(inner: Arc<Inner>, id: DownloadId, token: CancellationToken) {
             )
     }) {
         inner.credentials.lock().await.remove(&id);
+        inner.captured_headers.lock().await.remove(&id);
     }
     inner.download_hosts.lock().await.remove(&id);
 }

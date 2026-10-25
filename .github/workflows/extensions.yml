@@ -1,0 +1,78 @@
+name: Extension packages and explicit signing
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Numeric extension version, for example 0.1.1 (no v/prerelease suffix)"
+        required: true
+        type: string
+      sign_firefox:
+        description: "Request an unlisted signed XPI from Mozilla (requires protected CI secrets)"
+        type: boolean
+        default: false
+      upload_chromium_draft:
+        description: "Upload a Chrome store DRAFT only; never submit/publish"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: extension-signing
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    environment: extension-signing
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:extension
+      - name: Build isolated browser packages
+        env:
+          EXTENSION_VERSION: ${{ inputs.version }}
+          OSDM_CHROMIUM_PUBLIC_KEY: ${{ vars.CHROME_PUBLIC_KEY }}
+        run: node extension/release.mjs build --version "$EXTENSION_VERSION" --output "$RUNNER_TEMP/osdm-extension-release"
+      - name: Lint Firefox package source
+        run: pnpm exec web-ext lint --no-config-discovery --source-dir "$RUNNER_TEMP/osdm-extension-release/source/firefox"
+      - name: Sign Firefox for unlisted installation (not a public listing)
+        if: inputs.sign_firefox
+        env:
+          EXTENSION_VERSION: ${{ inputs.version }}
+          OSDM_ALLOW_EXTENSION_SIGNING: "1"
+          AMO_API_KEY: ${{ secrets.AMO_API_KEY }}
+          AMO_API_SECRET: ${{ secrets.AMO_API_SECRET }}
+        run: node extension/release.mjs sign-firefox --version "$EXTENSION_VERSION" --output "$RUNNER_TEMP/osdm-extension-release"
+      - name: Upload Chrome draft (never publish)
+        if: inputs.upload_chromium_draft
+        env:
+          EXTENSION_VERSION: ${{ inputs.version }}
+          OSDM_ALLOW_EXTENSION_SIGNING: "1"
+          OSDM_CHROMIUM_PUBLIC_KEY: ${{ vars.CHROME_PUBLIC_KEY }}
+          CHROME_PUBLISHER_ID: ${{ vars.CHROME_PUBLISHER_ID }}
+          CHROME_ITEM_ID: ${{ vars.CHROME_ITEM_ID }}
+          CHROME_CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
+          CHROME_CLIENT_SECRET: ${{ secrets.CHROME_CLIENT_SECRET }}
+          CHROME_REFRESH_TOKEN: ${{ secrets.CHROME_REFRESH_TOKEN }}
+        run: node extension/release.mjs upload-chromium-draft --version "$EXTENSION_VERSION" --output "$RUNNER_TEMP/osdm-extension-release"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: osdm-extension-candidates
+          path: |
+            ${{ runner.temp }}/osdm-extension-release/*.zip
+            ${{ runner.temp }}/osdm-extension-release/*.xpi
+            ${{ runner.temp }}/osdm-extension-release/SHA256SUMS.txt
+            ${{ runner.temp }}/osdm-extension-release/chromium-draft.json
+          if-no-files-found: error
+          retention-days: 7

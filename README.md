@@ -64,6 +64,13 @@ Most downloads fail loudly for ordinary reasons: a server rate-limits a burst of
   validation remains separate. Localization is skipped for this implementation.
 - **Automatic GitHub updates.** OSDM checks published GitHub Releases after launch and every six hours, can include prereleases, and downloads only after confirmation. Packages are checked against the release’s `SHA256SUMS.txt`. Windows updates install in place with `/UPDATE`, so the previous installation is not uninstalled.
 - **Local-first by default.** No telemetry. The queue lives in a local SQLite database, and the engine is independent of the desktop shell.
+- **P2 capture and automation (source).** Desktop batch/clipboard/drop input,
+  named queues, persisted UTC schedules, safe changed-source revisions, and a
+  JSON CLI with saved-queue desktop triggers. Chromium/Firefox extension targets
+  use a protected native helper; Windows startup and explicit, cancellable
+  completion actions are available. Start with [P2 validation and limits](docs/p2-validation.md),
+  the [CLI contract](crates/cli/README.md), and [browser setup](extension/README.md).
+  Native/browser release gates remain open; this is not a P2 completion claim.
 
 The adaptive connection, recovery, and integrity foundation is implemented. Mirror intelligence, per-download priorities, storage reservations, duplicate detection, predictive scheduling, automatic organization, and media detection are planned in [the phased roadmap](docs/intelligent-downloads.md).
 

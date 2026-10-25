@@ -102,6 +102,16 @@ impl Engine {
             .position(|d| d.id == id)
             .ok_or(Error::NotFound)?;
         let download = &data.downloads[index];
+        if data.automation.membership.get(&id).is_some_and(|queue| {
+            data.automation
+                .queues
+                .iter()
+                .any(|q| q.id == *queue && q.synchronize)
+        }) {
+            return Err(Error::Invalid(
+                "remove the entry from its synchronization queue before deleting history".into(),
+            ));
+        }
         if data.running.contains_key(&id) || !terminal(download.state) {
             return Err(Error::Invalid(
                 "only fully stopped terminal downloads can be removed".into(),
@@ -126,6 +136,7 @@ impl Engine {
         self.inner.store.remove(download, retain_partial).await?;
         data.downloads.remove(index);
         self.inner.credentials.lock().await.remove(&id);
+        self.inner.captured_headers.lock().await.remove(&id);
         Ok(())
     }
 

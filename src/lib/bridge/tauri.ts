@@ -61,6 +61,23 @@ export class TauriBridge implements EngineBridge {
     await this.invoke("engine_set_credentials", { id, credentials });
   }
 
+  async enqueueBatch(items: import("@/lib/types").BatchItem[], startPaused: boolean): Promise<import("@/lib/types").BatchResult[]> {
+    await this.settingsWrites;
+    return this.invoke("engine_enqueue_batch", { items, startPaused });
+  }
+  async automation(): Promise<import("@/lib/types").Automation> { return this.invoke("engine_automation"); }
+  async captureStatus(): Promise<boolean> { return this.invoke("capture_status"); }
+  async enableCapture(enabled: boolean): Promise<void> { return this.invoke("capture_enable", { enabled }); }
+  async powerStatus(): Promise<import("@/lib/types").PowerPlan | null> { return this.invoke("power_status"); }
+  async armPower(queueId: string, action: import("@/lib/types").CompletionAction, consent: boolean): Promise<void> { return this.invoke("power_arm", { queueId, action, consent }); }
+  async cancelPower(): Promise<void> { return this.invoke("power_cancel"); }
+  async acknowledgePower(): Promise<void> { return this.invoke("power_acknowledge"); }
+  async autostartStatus(): Promise<boolean> { return this.invoke("desktop_autostart_status"); }
+  async setAutostart(enabled: boolean): Promise<void> { return this.invoke("desktop_autostart", { enabled }); }
+  async configureAutomation(command: import("@/lib/types").AutomationCommand): Promise<import("@/lib/types").Automation> {
+    return this.invoke("engine_configure_automation", { command });
+  }
+
   async updateProperties(id: string, properties: DownloadProperties): Promise<void> {
     await this.invoke("engine_update_properties", { id, properties });
   }

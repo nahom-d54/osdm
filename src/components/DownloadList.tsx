@@ -11,7 +11,7 @@ import { orderDownloads, type DownloadSort } from "@/lib/download-order";
 import { useSettings } from "@/store/settings";
 
 export function DownloadList({ onAdd }: { onAdd: () => void }) {
-  const { downloads, view, query, categoryFilter, selectedId, setSelected, setQuery, setView, checkedIds, setChecked } = useEngine();
+  const { downloads, view, query, categoryFilter, queueFilter, automation, selectedId, setSelected, setQuery, setView, checkedIds, setChecked } = useEngine();
   const listRef = useRef<HTMLUListElement>(null);
   const columns = useSettings((state) => state.settings.visible_columns);
   const [sort, setSort] = useState<DownloadSort>("queue");
@@ -28,9 +28,9 @@ export function DownloadList({ onAdd }: { onAdd: () => void }) {
 
   const visible = useMemo(() => {
     return orderDownloads(downloads.filter(
-      (download) => matchesView(view, download) && matchesQuery(download, query) && (categoryFilter == null || (download.properties?.category_id ?? "") === categoryFilter),
+      (download) => matchesView(view, download) && matchesQuery(download, query) && (categoryFilter == null || (download.properties?.category_id ?? "") === categoryFilter) && (queueFilter == null || (automation.membership[download.id] ?? "") === queueFilter),
     ), sort, descending);
-  }, [downloads, view, query, categoryFilter, sort, descending]);
+  }, [downloads, view, query, categoryFilter, queueFilter, automation, sort, descending]);
 
   const onKey = (event: KeyboardEvent) => {
     const rows = Array.from(listRef.current?.querySelectorAll<HTMLLIElement>("li[data-row]") ?? []);

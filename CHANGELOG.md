@@ -8,6 +8,26 @@ All notable changes to OSDM are documented here. This project follows
 
 ### Added
 
+- P2 desktop batch/clipboard/drop capture, named queue management/navigation,
+  persisted UTC transfer windows, missed-run/overlap policies, and safe changed-
+  source revision downloads without replacing existing copies.
+- Chromium/Firefox extension targets with explicit/automatic capture rules,
+  bounded authenticated native-message forwarding, DPAPI-protected Windows
+  endpoint discovery, expiring durable handoff leases, and memory-only explicit
+  per-transfer cookie/authorization inputs. Real-browser/store gates remain open.
+- Saved-queue CLI desktop triggers, a headless scheduler mode, current-user
+  Windows startup, and session-only opt-in Windows shutdown/named-RAS disconnect
+  with a visible, cancellable countdown and final idle-only engine shutdown.
+- P2 UI/accessibility, extension-adapter, lease, schedule and synchronization
+  regressions; separate capture-tools release archives. See `docs/p2-validation.md`.
+- Disposable real Chrome/Firefox native-capture tests with debug-only app/profile
+  isolation, temporary registration backup/restore, restart and fallback checks.
+- Manual extension packaging/checksum workflow with optional unlisted Mozilla
+  signing and Chrome draft-only uploads via CI secrets; no automatic publication.
+- Initial P2 headless CLI with batch URL/file-list input, durable queue-only
+  admission, repeat-run duplicate ID reuse, start-queue, and JSON Lines results.
+  Browser capture, desktop batch input, and scheduling remain planned; this is
+  not completion of the P2 gate. See `crates/cli/README.md` for safety limits.
 - P1 category destination suggestions with built-in and custom categories,
   ordered domain/extension rules, folder overrides, and persistent preferences.
 - Optional last-used folder remembering and category-routing regression tests.
@@ -25,6 +45,12 @@ All notable changes to OSDM are documented here. This project follows
 
 ### Changed
 
+- Approved a synchronization-only exception to the no-overwrite policy for
+  explicitly enabled, verified, atomic, crash-recoverable replacement of unchanged
+  OSDM-owned files. Ordinary downloads remain no-clobber; replacement behavior is
+  not implemented by this documentation change.
+- Engine schema 5 transactionally upgrades revisions 0–4 and rejects downgrade
+  rather than allowing older binaries to bypass queues, schedules or handoff intent.
 - Engine schema 4 transactionally upgrades existing databases and prevents older
   writers from discarding metadata or custom temporary-storage ownership.
 - Localization is excluded from the current P1 scope at the user's request.

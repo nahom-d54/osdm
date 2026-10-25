@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Download, EngineConfig } from "@/lib/types";
+import type { Automation, Download, EngineConfig } from "@/lib/types";
 import { ACTIVE_STATES } from "@/lib/types";
 import type { EngineBridge } from "@/lib/bridge/types";
 import { getBridge } from "@/lib/bridge";
@@ -15,6 +15,8 @@ export interface EngineStore {
   view: ViewFilter;
   query: string;
   categoryFilter: string | null;
+  queueFilter: string | null;
+  automation: Automation;
   selectedId: string | null;
   checkedIds: string[];
   detailsOpen: boolean;
@@ -43,6 +45,7 @@ export interface EngineStore {
   setView(view: ViewFilter): void;
   setQuery(query: string): void;
   setCategoryFilter(category: string | null): void;
+  setQueueFilter(queue: string | null): void;
   setSelected(id: string | null): void;
   toggleDetails(): void;
   clearBanner(): void;
@@ -83,6 +86,8 @@ export const useEngine = create<EngineStore>((set, get) => {
     view: "all",
     query: "",
     categoryFilter: null,
+    queueFilter: null,
+    automation: { queues: [], schedules: [], membership: {} },
     selectedId: null,
     checkedIds: [],
     detailsOpen: false,
@@ -97,10 +102,15 @@ export const useEngine = create<EngineStore>((set, get) => {
           const settings = useSettings.getState().settings;
           await b.open(configFrom(settings));
           const downloads = await b.snapshot();
+          const automation = await b.automation();
           b.onError((message) => set({ engineError: message }));
-          b.subscribe((downloads) => set({ downloads }));
+          let lastAutomation = 0;
+          b.subscribe((downloads) => {
+            set({ downloads });
+            if (Date.now() - lastAutomation >= 1000) { lastAutomation = Date.now(); void b.automation().then((automation) => set({ automation })).catch(() => {}); }
+          });
           bridge = b;
-          set({ ready: true, downloads, engineError: null });
+          set({ ready: true, downloads, automation, engineError: null });
         })().catch((error: unknown) => {
           set({ engineError: error instanceof Error ? error.message : String(error) });
         }).finally(() => { initializing = null; });
@@ -194,8 +204,9 @@ export const useEngine = create<EngineStore>((set, get) => {
 
     applySpeedLimit: (bytesPerSecond) => runCommand((b) => b.setSpeedLimit(bytesPerSecond)),
 
-    setView: (view) => set({ view, categoryFilter: null }),
-    setCategoryFilter: (categoryFilter) => set({ categoryFilter, view: "all", selectedId: null }),
+    setView: (view) => set({ view, categoryFilter: null, queueFilter: null }),
+    setCategoryFilter: (categoryFilter) => set({ categoryFilter, queueFilter: null, view: "all", selectedId: null }),
+    setQueueFilter: (queueFilter) => set({ queueFilter, categoryFilter: null, view: "all", selectedId: null }),
     setQuery: (query) => set({ query }),
     setSelected: (selectedId) => set({ selectedId, detailsOpen: selectedId != null }),
     toggleDetails: () => set((s) => ({ detailsOpen: !s.detailsOpen })),

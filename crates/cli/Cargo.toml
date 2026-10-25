@@ -1,0 +1,22 @@
+[package]
+name = "osdm-cli"
+version = "0.1.2-alpha.1"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "osdm-cli"
+path = "src/main.rs"
+
+[dependencies]
+download-engine = { path = "../download-engine" }
+osdm-browser-bridge = { path = "../browser-bridge" }
+percent-encoding = "2"
+reqwest = { version = "0.12", default-features = false }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
+
+[dev-dependencies]
+axum = "0.8"
+tempfile = "3"

@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>OSDM capture</title>
+    <style>
+      body {
+        font: 14px system-ui;
+        width: 330px;
+        padding: 16px;
+        color: #20252d;
+        background: #f6f7fa;
+      }
+      h1 {
+        font-size: 20px;
+      }
+      label {
+        display: block;
+        margin: 14px 0;
+      }
+      input[type="text"] {
+        box-sizing: border-box;
+        width: 100%;
+        padding: 8px;
+        margin-top: 5px;
+      }
+      button {
+        padding: 8px 12px;
+        margin: 4px 4px 4px 0;
+      }
+      #status {
+        min-height: 2em;
+      }
+      small {
+        display: block;
+        line-height: 1.5;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>OSDM capture</h1>
+    <small
+      >Enable browser integration in OSDM and register the native host first.
+      Automatic capture sends no cookies.</small
+    >
+    <label
+      ><input id="enabled" type="checkbox" /> Capture eligible browser
+      downloads</label
+    >
+    <label
+      >Excluded sites (including subdomains)<input
+        id="exclusions"
+        type="text"
+        placeholder="example.com, internal.example"
+    /></label>
+    <label
+      >File extensions<input
+        id="extensions"
+        type="text"
+        placeholder="zip exe pdf"
+    /></label>
+    <button id="save">Save rules</button
+    ><button id="check">Check connection</button
+    ><button id="modifiers">Enable Shift/Alt bypass</button
+    ><button id="clear-warning">Clear reviewed warning</button>
+    <p id="status" role="status"></p>
+    <small
+      >Cookies are handed off only from the explicit context-menu action, for
+      the selected URL. They are never stored by this extension. If OSDM is
+      unavailable, automatic capture leaves your browser download alone.</small
+    >
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

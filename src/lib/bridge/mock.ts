@@ -80,6 +80,7 @@ function contentTypeFor(value: string): string {
 export class MockBridge implements EngineBridge {
   readonly kind = "mock" as const;
   private entries: Entry[] = [];
+  private automationState: import("@/lib/types").Automation = { queues: [], schedules: [], membership: {} };
   private config: EngineConfig = {
     max_active_downloads: 3,
     connections_per_download: 4,
@@ -245,6 +246,82 @@ export class MockBridge implements EngineBridge {
     if (properties.description.length > 4096 || (properties.category_id?.length ?? 0) > 128) throw new BridgeError("Invalid properties.");
     this.find(id).download.properties = { ...properties };
     this.markDirty();
+  }
+
+  async automation(): Promise<import("@/lib/types").Automation> { return structuredClone(this.automationState); }
+  async captureStatus(): Promise<boolean> { return false; }
+  async enableCapture(_enabled: boolean): Promise<void> { throw new BridgeError("Browser integration requires the native desktop app and registered host."); }
+  async powerStatus(): Promise<import("@/lib/types").PowerPlan | null> { return null; }
+  async armPower(_queueId: string, _action: import("@/lib/types").CompletionAction, _consent: boolean): Promise<void> { throw new BridgeError("Completion actions require the native Windows app."); }
+  async cancelPower(): Promise<void> {}
+  async acknowledgePower(): Promise<void> {}
+  async autostartStatus(): Promise<boolean> { return false; }
+  async setAutostart(_enabled: boolean): Promise<void> { throw new BridgeError("Start with Windows requires the native Windows app."); }
+  async configureAutomation(command: import("@/lib/types").AutomationCommand): Promise<import("@/lib/types").Automation> {
+    const next = structuredClone(this.automationState);
+    if (command.action === "save_queue") {
+      if (!command.name.trim() || new TextEncoder().encode(command.name).length > 128) throw new BridgeError("Invalid queue name.");
+      const old = next.queues.find((q) => q.id === command.id);
+      if (old) old.name = command.name.trim();
+      else next.queues.push({ id: command.id, name: command.name.trim(), running: false, stop_at: null });
+    } else if (command.action === "delete_queue") {
+      if (next.queues.some((q) => q.id === command.id && q.running)) throw new BridgeError("Stop queue before deletion.");
+      next.queues = next.queues.filter((q) => q.id !== command.id);
+      next.schedules = next.schedules.filter((s) => s.queue_id !== command.id);
+      next.membership = Object.fromEntries(Object.entries(next.membership).filter(([, q]) => q !== command.id));
+    } else if (command.action === "assign") {
+      if (command.queue_id && !next.queues.some((q) => q.id === command.queue_id)) throw new BridgeError("Unknown queue.");
+      for (const id of command.ids) {
+        if (!["Paused", "Completed", "Failed", "Canceled"].includes(this.find(id).download.state)) throw new BridgeError("Pause before queue assignment.");
+        if (command.queue_id) next.membership[id] = command.queue_id;
+        else delete next.membership[id];
+      }
+    } else if (command.action === "save_schedule") {
+      const s = command.schedule;
+      if (!next.queues.some((q) => q.id === s.queue_id) || !Number.isSafeInteger(s.next_run) || s.next_run < 0 || (s.interval_seconds != null && (s.interval_seconds < 60 || s.interval_seconds > 31536000))) throw new BridgeError("Invalid schedule.");
+      next.schedules = [...next.schedules.filter((s) => s.id !== command.schedule.id), command.schedule];
+    } else if (command.action === "delete_schedule") next.schedules = next.schedules.filter((s) => s.id !== command.id);
+    else if (command.action === "set_synchronization") {
+      const queue = next.queues.find((q) => q.id === command.id);
+      if (!queue || queue.running) throw new BridgeError("Stop a known queue before changing synchronization policy.");
+      // Browser mock cannot establish real remote identity; do not fabricate a
+      // synchronization result from its simulated sizes/progress.
+      if (command.enabled) throw new BridgeError("Remote revision checks require the native engine.");
+      queue.synchronize = false;
+    }
+    else {
+      const queue = next.queues.find((q) => q.id === command.id);
+      if (!queue) throw new BridgeError("Unknown queue.");
+      queue.running = command.action === "start";
+      for (const [id, q] of Object.entries(next.membership)) if (q === queue.id) {
+        const d = this.find(id).download;
+        if (command.action === "start" && d.state === "Paused") await this.resume(id);
+        if (command.action === "stop" && ["Queued", "Downloading", "Pausing"].includes(d.state)) await this.pause(id);
+      }
+    }
+    this.automationState = next;
+    return this.automation();
+  }
+
+  async enqueueBatch(items: import("@/lib/types").BatchItem[], startPaused: boolean): Promise<import("@/lib/types").BatchResult[]> {
+    if (!items.length || items.length > 1000) throw new BridgeError("Batch must contain 1 to 1000 requests.");
+    const results: import("@/lib/types").BatchResult[] = [];
+    for (const [index, item] of items.entries()) {
+      let id: string | null = null;
+      let duplicate = false;
+      try {
+        const url = new URL(item.request.url); url.hash = "";
+        if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new BridgeError("Invalid URL.");
+        if (item.queue_id && !this.automationState.queues.some((q) => q.id === item.queue_id)) throw new BridgeError("Unknown queue.");
+        const old = this.entries.find((e) => e.download.url === url.href && e.download.destination === item.request.destination);
+        duplicate = !!old;
+        id = old?.download.id ?? await this.enqueue({ ...item.request, url: url.href }, true);
+        if (item.queue_id) await this.configureAutomation({ action: "assign", ids: [id], queue_id: item.queue_id });
+        if (!startPaused) await this.resume(id);
+        results.push({ index, id, duplicate, error: null });
+      } catch { results.push({ index, id, duplicate, error: "admission_failed" }); }
+    }
+    return results;
   }
 
   async testSound(_path: string): Promise<void> { throw new BridgeError("Sound tests require the native Windows app."); }
@@ -446,6 +523,26 @@ export class MockBridge implements EngineBridge {
   // --- simulator ---
 
   private tick(): void {
+    const now = Math.floor(Date.now() / 1000);
+    for (const schedule of this.automationState.schedules) {
+      if (!schedule.enabled || schedule.next_run > now) continue;
+      const late = now - schedule.next_run;
+      const queue = this.automationState.queues.find((q) => q.id === schedule.queue_id);
+      if (queue && !queue.running && late <= 30) {
+        queue.running = true;
+        queue.stop_at = schedule.stop_after_seconds == null ? null : now + schedule.stop_after_seconds;
+        for (const entry of this.entries) if (this.automationState.membership[entry.download.id] === queue.id && entry.download.state === "Paused") { entry.download.state = "Queued"; this.markDirty(); }
+      }
+      if (schedule.interval_seconds) schedule.next_run += (Math.floor(late / schedule.interval_seconds) + 1) * schedule.interval_seconds;
+      else schedule.enabled = false;
+    }
+    for (const queue of this.automationState.queues) {
+      if (queue.stop_at != null && queue.stop_at <= now) {
+        queue.running = false; queue.stop_at = null;
+        for (const entry of this.entries) if (this.automationState.membership[entry.download.id] === queue.id && ["Downloading", "Queued", "Pausing"].includes(entry.download.state)) { entry.download.state = "Paused"; entry.download.bytes_per_second = 0; this.markDirty(); }
+      }
+      if (queue.running && !this.entries.some((entry) => this.automationState.membership[entry.download.id] === queue.id && ["Queued", "Downloading", "Pausing"].includes(entry.download.state))) { queue.running = false; queue.stop_at = null; }
+    }
     const activeCount = this.entries.filter((e) => e.download.state === "Downloading").length;
     let budgetUsed = 0;
     const capBytesPerTick = this.config.bytes_per_second > 0 ? this.config.bytes_per_second * (TICK_MS / 1000) : Infinity;

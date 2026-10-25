@@ -62,9 +62,11 @@ It uses `MockBridge` with deterministic transfer behavior.
 | `pnpm typecheck` | TypeScript only |
 | `pnpm build` | Typecheck and production web build |
 | `pnpm test` | Routing, sorting, grouping, and bulk behavior regressions |
+| `pnpm test:extension` | Chromium/Firefox-shaped capture handoff and rule regressions |
 | `pnpm exec playwright install chromium` | Install the UI test browser |
 | `pnpm test:ui` | Build and run Chromium workflows plus axe accessibility checks |
 | `cargo test -p download-engine` | Fast engine suite |
+| `cargo test -p osdm-cli -p osdm-browser-bridge` | Batch automation, native framing, and encrypted bridge checks |
 | `cargo test --workspace` | Engine plus native shell tests |
 | `cargo fmt --all -- --check` | Formatting gate |
 | `cargo clippy --workspace --all-targets -- -D warnings` | Lint gate |
@@ -86,6 +88,10 @@ It skips itself when the disk has less than 3 GiB free.
   and publication.
 - `src-tauri/` is the desktop shell. Keep it thin: commands should validate and
   delegate to the engine, not duplicate transfer logic.
+- `crates/cli/` provides the noninteractive automation contract; `crates/browser-bridge/`
+  provides protected per-user discovery and bounded encrypted native transport.
+  Neither creates another transfer implementation. Browser targets and explicit
+  native-host registration scripts live in `extension/`.
 - `src/lib/bridge/` is the only UI-to-engine seam. `TauriBridge` maps commands;
   `MockBridge` must preserve the same observable behavior for browser work.
 - `src/` is the React interface. Render engine snapshots as authoritative; do not
@@ -100,8 +106,12 @@ It skips itself when the disk has less than 3 GiB free.
 These rules are not stylistic preferences. Breaking one risks data loss or
 silently false progress.
 
-1. **Never overwrite a destination.** Publication uses a same-directory hard
-   link and refuses conflicts.
+1. **No implicit overwrite.** Ordinary downloads publish through a same-directory
+   hard link and refuse conflicts. Explicitly enabled synchronization may replace
+   an unchanged OSDM-owned file only through a verified, atomic, crash-recoverable
+   replacement protocol. Reject unrelated, modified, or concurrently changed
+   files; never stream into or truncate the existing destination. See the
+   [synchronization replacement policy](docs/synchronization-replacement.md).
 2. **Persist intent before destructive filesystem work.** Invalidate durable
    offsets before truncating or reusing a temporary file so a crash cannot turn
    preallocated zeroes into claimed progress.

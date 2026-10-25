@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
 mod adaptive;
+mod automation;
 mod cleanup;
 mod engine;
 mod integrity;
@@ -12,6 +13,7 @@ mod store;
 pub mod test_faults;
 mod transfer;
 
+pub use automation::*;
 pub use engine::Engine;
 pub use model::*;
 

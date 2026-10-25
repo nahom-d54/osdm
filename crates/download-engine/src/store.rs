@@ -21,7 +21,7 @@ impl Store {
         let version: i64 = sqlx::query_scalar("PRAGMA user_version")
             .fetch_one(&pool)
             .await?;
-        if !(0..=4).contains(&version) {
+        if !(0..=5).contains(&version) {
             return Err(crate::Error::Invalid(
                 "database was created by a newer engine version".into(),
             ));
@@ -31,12 +31,88 @@ impl Store {
             .execute(&mut *tx).await?;
         sqlx::query("CREATE TABLE IF NOT EXISTS orphaned_partials (id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
             .execute(&mut *tx).await?;
-        // Older engines must not discard organization metadata when saving.
-        sqlx::query("PRAGMA user_version = 4")
+        sqlx::query("CREATE TABLE IF NOT EXISTS automation (id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL)")
+            .execute(&mut *tx).await?;
+        // Older engines must not bypass queue/schedule decisions.
+        sqlx::query("PRAGMA user_version = 5")
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
         Ok(Self(pool))
+    }
+
+    pub async fn load_automation(&self) -> Result<crate::Automation> {
+        let payload: Option<String> =
+            sqlx::query_scalar("SELECT payload FROM automation WHERE id=1")
+                .fetch_optional(&self.0)
+                .await?;
+        Ok(payload
+            .map(|s| serde_json::from_str(&s))
+            .transpose()?
+            .unwrap_or_default())
+    }
+
+    pub async fn save_capture(
+        &self,
+        download: &Download,
+        position: usize,
+        automation: &crate::Automation,
+    ) -> Result<()> {
+        let mut tx = self.0.begin().await?;
+        sqlx::query("INSERT INTO downloads(id,position,payload) VALUES(?,?,?)")
+            .bind(download.id.to_string())
+            .bind(position as i64)
+            .bind(serde_json::to_string(download)?)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("INSERT INTO automation(id,payload) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload")
+            .bind(serde_json::to_string(automation)?).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn discard_capture(
+        &self,
+        id: crate::DownloadId,
+        automation: &crate::Automation,
+        downloads: &[Download],
+    ) -> Result<()> {
+        let mut tx = self.0.begin().await?;
+        sqlx::query("DELETE FROM downloads WHERE id=?")
+            .bind(id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        for (position, download) in downloads.iter().enumerate() {
+            sqlx::query("UPDATE downloads SET position=? WHERE id=?")
+                .bind(position as i64)
+                .bind(download.id.to_string())
+                .execute(&mut *tx)
+                .await?;
+        }
+        sqlx::query("INSERT INTO automation(id,payload) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload")
+            .bind(serde_json::to_string(automation)?).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn save_automation(
+        &self,
+        automation: &crate::Automation,
+        downloads: &[Download],
+    ) -> Result<()> {
+        let mut tx = self.0.begin().await?;
+        sqlx::query("INSERT INTO automation(id,payload) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload")
+            .bind(serde_json::to_string(automation)?).execute(&mut *tx).await?;
+        for (position, download) in downloads.iter().enumerate() {
+            sqlx::query("UPDATE downloads SET payload=?,position=? WHERE id=?")
+                .bind(serde_json::to_string(download)?)
+                .bind(position as i64)
+                .bind(download.id.to_string())
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(())
     }
 
     pub async fn load(&self) -> Result<Vec<Download>> {

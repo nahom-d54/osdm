@@ -1,5 +1,8 @@
+mod capture;
 mod completion;
+mod power;
 mod settings;
+mod startup;
 mod updates;
 
 use download_engine::{
@@ -208,6 +211,38 @@ async fn engine_probe(shell: State<'_, Shell>, url: String) -> Reply<ProbeInfo> 
         .engine()
         .await?
         .probe(&url)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn engine_automation(shell: State<'_, Shell>) -> Reply<download_engine::Automation> {
+    Ok(shell.engine().await?.automation().await)
+}
+
+#[tauri::command]
+async fn engine_configure_automation(
+    shell: State<'_, Shell>,
+    command: download_engine::AutomationCommand,
+) -> Reply<download_engine::Automation> {
+    shell
+        .engine()
+        .await?
+        .configure_automation(command)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn engine_enqueue_batch(
+    shell: State<'_, Shell>,
+    items: Vec<download_engine::BatchItem>,
+    start_paused: bool,
+) -> Reply<Vec<download_engine::BatchResult>> {
+    shell
+        .engine()
+        .await?
+        .enqueue_batch(items, start_paused)
         .await
         .map_err(|e| e.to_string())
 }
@@ -520,18 +555,62 @@ fn quit(app: AppHandle) {
 }
 
 pub fn run() {
-    let app = tauri::Builder::default()
+    let test_directory = osdm_browser_bridge::native_test_directory().unwrap_or_else(|_| {
+        eprintln!("OSDM: invalid native test isolation directory");
+        std::process::exit(2);
+    });
+    if std::env::args().any(|arg| arg == "--native-test-info") {
+        println!(
+            "{}",
+            serde_json::json!({"native_test":test_directory.is_some()})
+        );
+        return;
+    }
+    let test_mode = test_directory.is_some();
+    let mut context = tauri::generate_context!();
+    if let Some(directory) = &test_directory {
+        use sha2::{Digest, Sha256};
+        let identity = format!(
+            "{:x}",
+            Sha256::digest(directory.to_string_lossy().as_bytes())
+        );
+        context.config_mut().identifier =
+            format!("app.osdm.desktop.native-test-{}", &identity[..16]);
+        // Create the disposable webview explicitly below so even its Chromium
+        // cache/localStorage stays inside the marked test directory.
+        context.config_mut().app.windows.clear();
+    }
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             show_window(app)
         }))
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_opener::init());
+    // These plugins are unnecessary in isolated tests and may register native OS
+    // integrations. Test fixtures never enable real notifications or updates.
+    let builder = if test_mode {
+        builder
+    } else {
+        builder
+            .plugin(tauri_plugin_notification::init())
+            .plugin(tauri_plugin_updater::Builder::new().build())
+    };
+    let app = builder
         .invoke_handler(tauri::generate_handler![
             engine_open,
             engine_shutdown,
             engine_enqueue,
+            engine_enqueue_batch,
+            engine_automation,
+            engine_configure_automation,
+            capture::capture_status,
+            capture::capture_enable,
+            power::power_status,
+            power::power_arm,
+            power::power_cancel,
+            power::power_acknowledge,
+            startup::desktop_autostart,
+            startup::desktop_autostart_status,
             test_sound,
             drag_completed,
             engine_update_properties,
@@ -557,12 +636,39 @@ pub fn run() {
             open_path,
             reveal_path,
         ])
-        .setup(|app| {
-            let directory = app.path().app_data_dir()?;
+        .setup(move |app| {
+            let directory = match &test_directory {
+                Some(directory) => directory.clone(),
+                None => app.path().app_data_dir()?,
+            };
             std::fs::create_dir_all(&directory)?;
             let settings =
                 tauri::async_runtime::block_on(SettingsStore::open(&directory.join("settings.db")))
                     .map_err(std::io::Error::other)?;
+            if test_mode {
+                std::fs::create_dir_all(directory.join("downloads"))?;
+                tauri::async_runtime::block_on(async {
+                    if settings.load().await?.is_none() {
+                        let config = Settings {
+                            default_directory: directory
+                                .join("downloads")
+                                .to_string_lossy()
+                                .into_owned(),
+                            onboarding_complete: true,
+                            auto_update_check: false,
+                            desktop: settings::DesktopPreferences {
+                                silent: true,
+                                completion_dialog: false,
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        };
+                        settings.save(&config).await?;
+                    }
+                    Ok::<(), String>(())
+                })
+                .map_err(std::io::Error::other)?;
+            }
             app.manage(Shell {
                 running: Mutex::new(None),
                 settings,
@@ -572,6 +678,17 @@ pub fn run() {
                 updating: AtomicBool::new(false),
                 tray_available: AtomicBool::new(false),
             });
+            if test_mode {
+                tauri::WebviewWindowBuilder::new(
+                    app,
+                    "main",
+                    tauri::WebviewUrl::App("index.html".into()),
+                )
+                .title("OSDM — isolated native test")
+                .data_directory(directory.join("webview"))
+                .inner_size(1024.0, 700.0)
+                .build()?;
+            }
             let show = MenuItem::with_id(app, "show", "Open OSDM", true, None::<&str>)?;
             let update =
                 MenuItem::with_id(app, "update", "Check for updates…", true, None::<&str>)?;
@@ -604,7 +721,11 @@ pub fn run() {
             app.state::<Shell>()
                 .tray_available
                 .store(tray_available, Ordering::Release);
-            updates::start_auto_check(app.handle().clone());
+            if !test_mode {
+                updates::start_auto_check(app.handle().clone());
+            }
+            capture::start(app.handle(), directory);
+            power::start(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -628,7 +749,7 @@ pub fn run() {
                 }
             }
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("could not initialize OSDM desktop shell");
     app.run(|app, event| {
         if let tauri::RunEvent::ExitRequested { api, .. } = event
@@ -662,9 +783,16 @@ mod tests {
                 updating: AtomicBool::new(false),
                 tray_available: AtomicBool::new(false),
             })
+            .manage(power::PowerState::default())
             .invoke_handler(tauri::generate_handler![
                 engine_open,
                 engine_enqueue,
+                engine_enqueue_batch,
+                engine_automation,
+                engine_configure_automation,
+                power::power_arm,
+                power::power_cancel,
+                power::power_status,
                 engine_update_properties,
                 engine_set_credentials,
                 engine_update_destination,
@@ -727,6 +855,43 @@ mod tests {
         )
         .unwrap();
         invoke("engine_reorder", json!({"ids":[]})).unwrap();
+        let queue = DownloadId::new_v4();
+        invoke(
+            "engine_configure_automation",
+            json!({"command":{"action":"save_queue","id":queue,"name":"IPC queue"}}),
+        )
+        .unwrap();
+        let batch = invoke("engine_enqueue_batch", json!({"items":[{"request":{"url":"http://127.0.0.1:9/batch","destination":dir.path().join("batch.bin")},"queue_id":queue}],"startPaused":true})).unwrap();
+        let batch_id = &batch[0]["id"];
+        assert!(batch[0]["error"].is_null());
+        assert_eq!(
+            invoke("engine_automation", json!({})).unwrap()["membership"]
+                [batch_id.as_str().unwrap()],
+            queue.to_string()
+        );
+        assert!(
+            invoke(
+                "power_arm",
+                json!({"queueId":queue,"action":{"kind":"shutdown"},"consent":false})
+            )
+            .is_err()
+        );
+        if cfg!(windows) {
+            invoke(
+                "power_arm",
+                json!({"queueId":queue,"action":{"kind":"shutdown"},"consent":true}),
+            )
+            .unwrap();
+            assert!(invoke("power_status", json!({})).unwrap()["deadline"].is_null());
+        }
+        invoke("power_cancel", json!({})).unwrap();
+        assert!(invoke("power_status", json!({})).unwrap().is_null());
+        invoke("engine_cancel", json!({"id":batch_id})).unwrap();
+        invoke(
+            "engine_remove_download",
+            json!({"id":batch_id,"removePartialFile":true}),
+        )
+        .unwrap();
         assert_eq!(invoke("engine_cleanup_partial_data", json!({})).unwrap(), 0);
         let deferred = invoke("engine_enqueue", json!({"request":{"url":"http://127.0.0.1:9/file","destination":dir.path().join("deferred.bin")},"startPaused":true})).unwrap();
         assert_eq!(

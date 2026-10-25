@@ -23,6 +23,17 @@ export interface EngineBridge {
   // --- Engine commands (mirrored 1:1) ---
   /** Deferred requests are persisted as Paused before scheduler admission. */
   enqueue(request: import("@/lib/types").DownloadRequest, startPaused?: boolean, properties?: import("@/lib/types").DownloadProperties, credentials?: import("@/lib/types").BasicCredentials): Promise<string>;
+  enqueueBatch(items: import("@/lib/types").BatchItem[], startPaused: boolean): Promise<import("@/lib/types").BatchResult[]>;
+  automation(): Promise<import("@/lib/types").Automation>;
+  configureAutomation(command: import("@/lib/types").AutomationCommand): Promise<import("@/lib/types").Automation>;
+  captureStatus(): Promise<boolean>;
+  enableCapture(enabled: boolean): Promise<void>;
+  powerStatus(): Promise<import("@/lib/types").PowerPlan | null>;
+  armPower(queueId: string, action: import("@/lib/types").CompletionAction, consent: boolean): Promise<void>;
+  cancelPower(): Promise<void>;
+  acknowledgePower(): Promise<void>;
+  autostartStatus(): Promise<boolean>;
+  setAutostart(enabled: boolean): Promise<void>;
   setCredentials(id: string, credentials: import("@/lib/types").BasicCredentials | null): Promise<void>;
   updateProperties(id: string, properties: import("@/lib/types").DownloadProperties): Promise<void>;
   updateDestination(id: string, destination: string): Promise<void>;

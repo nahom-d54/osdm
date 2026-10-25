@@ -65,6 +65,15 @@ pub struct BasicCredentials {
     pub password: String,
 }
 
+/// Explicit browser handoff; memory-only and restricted to the original origin.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CapturedHeaders {
+    pub cookie: Option<String>,
+    pub authorization: Option<String>,
+    pub user_agent: Option<String>,
+}
+
 /// Durable non-secret organization metadata. Credentials never belong here.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]

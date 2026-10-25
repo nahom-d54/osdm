@@ -27,7 +27,8 @@ Checksums are optional because many publishers provide no reference. A computed
 SHA-256 alone is **not** proof of integrity or authenticity. Existing downloads
 without a reference remain usable, and old history is not marked verified.
 Database revision 3 introduced downgrade protection for checksum requirements;
-current revision 4 also protects metadata and temporary-storage ownership.
+revision 4 protects metadata and temporary-storage ownership. Current revision 5
+also protects durable queues, schedule decisions, and browser handoff leases.
 
 ### Acceptance gate
 
@@ -58,7 +59,21 @@ connection, storage, integrity, and bandwidth budgets.
 ## Phase 3 — automation
 
 Delivery order: finish the standalone P1 release gate in `PLAN.md`, then browser
-capture and batch/CLI. Scheduling depends on the batch/CLI persistence and
+capture and batch/CLI. At the user's request, P2 work started ahead of remaining
+P1 interactive validation; see [the scoped P2 decision](p2-automation.md). Desktop
+batch capture, queues, fixed-interval UTC schedules, safe revision synchronization,
+and Chromium/Firefox capture targets are now implemented in source; see
+[P2 validation and scope limits](p2-validation.md). These are not predictive
+scheduling or content-aware duplicate detection. P1 and P2 release gates remain open.
+Disposable Windows Chrome/Firefox checks now cover native capture, app restart,
+missing-helper fallback and cross-origin credential stripping. Manual CI signing/
+draft-upload tooling is available, but no store signing or publication has been
+performed; persistent signed Firefox restart and other live gates remain open.
+The user has approved explicitly enabled, verified in-place replacement of
+unchanged OSDM-owned synchronization targets under
+[the replacement policy](synchronization-replacement.md). That protocol is still
+planned, not implemented; current synchronization preserves separate revisions.
+Scheduling depends on the batch/CLI persistence and
 automation contract. Category destination suggestions are available in the add
 dialog, with durable category assignments and category navigation; these do not
 constitute intelligent organization or scheduling. Localization is excluded from

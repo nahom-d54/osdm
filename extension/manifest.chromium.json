@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "minimum_chrome_version": "116",
+  "name": "OSDM capture",
+  "version": "0.1.0",
+  "description": "Send explicitly selected links and eligible downloads to your local OSDM application.",
+  "permissions": ["nativeMessaging", "contextMenus", "downloads", "storage", "activeTab", "scripting", "notifications"],
+  "optional_permissions": ["cookies"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_popup": "options.html" }
+}

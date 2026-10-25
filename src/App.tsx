@@ -2,6 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CircleAlert, X } from "lucide-react";
 
 import { AddDownloadDialog } from "@/components/AddDownloadDialog";
+import { AutomationDialog } from "@/components/AutomationDialog";
+import { PowerCountdown } from "@/components/PowerCountdown";
+import { captureUrls } from "@/lib/capture";
+import { Button } from "@/components/ui/button";
 import { DetailsPanel } from "@/components/DetailsPanel";
 import { DesktopDialogs } from "@/components/DesktopDialogs";
 import { OnboardingDialog } from "@/components/OnboardingDialog";
@@ -29,6 +33,9 @@ export default function App() {
   const settings = useSettings((state) => state.settings);
   const [addOpen, setAddOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [automationOpen, setAutomationOpen] = useState(false);
+  const [capturedText, setCapturedText] = useState("");
+  const [watchClipboard, setWatchClipboard] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
   // Theme: "system" follows the OS through a media query.
@@ -53,6 +60,31 @@ export default function App() {
   useEffect(() => {
     void init();
   }, [init]);
+
+  useEffect(() => {
+    let lastClipboard = "";
+    let disposed = false;
+    const offer = (text: string) => {
+      try { if (captureUrls(text).length) { setCapturedText(text); setAutomationOpen(true); } } catch { /* non-link clipboard content is never captured */ }
+    };
+    const onDrop = (event: DragEvent) => {
+      if (document.querySelector('[data-slot="dialog-content"]')) return;
+      if ((event.target as HTMLElement | null)?.closest('input, textarea, [contenteditable="true"]')) return;
+      if (event.dataTransfer?.types.includes("text/uri-list")) event.preventDefault();
+      const text = event.dataTransfer?.getData("text/uri-list") || event.dataTransfer?.getData("text/plain") || "";
+      try { if (captureUrls(text).length) { event.preventDefault(); offer(text); } } catch { /* not a URL drop */ }
+    };
+    const onDrag = (event: DragEvent) => {
+      if ((event.target as HTMLElement | null)?.closest('input, textarea, [contenteditable="true"]')) return;
+      if (event.dataTransfer?.types.some((type) => type === "text/uri-list" || type === "text/plain")) event.preventDefault();
+    };
+    const onFocus = () => {
+      if (!watchClipboard || document.querySelector('[data-slot="dialog-content"]')) return;
+      void navigator.clipboard.readText().then((text) => { if (!disposed && text !== lastClipboard) { lastClipboard = text; offer(text); } }).catch(() => {});
+    };
+    window.addEventListener("drop", onDrop); window.addEventListener("dragover", onDrag); window.addEventListener("focus", onFocus);
+    return () => { disposed = true; window.removeEventListener("drop", onDrop); window.removeEventListener("dragover", onDrag); window.removeEventListener("focus", onFocus); };
+  }, [watchClipboard]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -101,6 +133,7 @@ export default function App() {
 
         <div className="flex min-w-0 flex-1 flex-col">
           <Toolbar searchRef={searchRef} onAdd={() => setAddOpen(true)} />
+          <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-line-soft px-5 py-2 text-xs sm:px-6"><Button size="sm" variant="outline" onClick={() => { setCapturedText(""); setAutomationOpen(true); }}>Capture & queues</Button><label className="flex items-center gap-2 text-muted-foreground"><input type="checkbox" checked={watchClipboard} onChange={(e) => setWatchClipboard(e.target.checked)} />Offer clipboard links on focus · this session</label></div>
 
           {notice && (
             <div
@@ -142,9 +175,11 @@ export default function App() {
         </div>
 
         <AddDownloadDialog open={addOpen} onClose={() => setAddOpen(false)} />
+        <AutomationDialog open={automationOpen} onClose={() => setAutomationOpen(false)} initialText={capturedText} />
         <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
         <DesktopDialogs />
         <OnboardingDialog />
+        <PowerCountdown />
       </div>
     </TooltipProvider>
   );

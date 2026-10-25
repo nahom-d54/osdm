@@ -25,7 +25,7 @@ const VIEW_ICONS: Record<ViewFilter, LucideIcon> = {
 };
 
 export function Sidebar({ onSettings }: { onSettings: () => void }) {
-  const { view, setView, downloads, categoryFilter, setCategoryFilter } = useEngine();
+  const { view, setView, downloads, categoryFilter, setCategoryFilter, queueFilter, setQueueFilter, automation } = useEngine();
   const categories = useSettings((state) => state.settings.categories);
   const compact = useMediaQuery("(max-width: 1023px)");
 
@@ -104,7 +104,7 @@ export function Sidebar({ onSettings }: { onSettings: () => void }) {
             <h2 className="eyebrow px-2 pb-1.5 max-[1023px]:hidden">{group.heading}</h2>
             <div className="flex flex-col gap-0.5">
               {group.views.map((target) => {
-                const selected = view === target && categoryFilter == null;
+                const selected = view === target && categoryFilter == null && queueFilter == null;
                 const count = countFor(target);
                 const trigger = (
                   <button
@@ -153,6 +153,7 @@ export function Sidebar({ onSettings }: { onSettings: () => void }) {
             <span className="ml-auto max-[1023px]:hidden">{downloads.filter((download) => (download.properties?.category_id ?? "") === category.id).length}</span>
           </button>)}
         </section>
+        <section aria-label="Queues" className="mb-4"><h2 className="eyebrow px-2 pb-1.5 max-[1023px]:hidden">Queues</h2>{[{ id: "", name: "General queue" }, ...automation.queues].map((queue) => <button key={queue.id} type="button" aria-label={`Queue: ${queue.name}`} title={queue.name} aria-current={queueFilter === queue.id ? "page" : undefined} onClick={() => setQueueFilter(queue.id)} className={cn("flex min-h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs", queueFilter === queue.id ? "bg-brand-soft text-brand" : "text-muted-foreground hover:bg-raise")}><Clock className="size-3 shrink-0" aria-hidden="true" /><span className="truncate max-[1023px]:hidden">{queue.name}</span><span className="ml-auto max-[1023px]:hidden">{downloads.filter((d) => (automation.membership[d.id] ?? "") === queue.id).length}</span></button>)}</section>
       </div>
 
       <div className="shrink-0 border-t border-line-soft p-2.5">

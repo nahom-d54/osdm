@@ -14,7 +14,7 @@ Parallel connections can overcome per-connection server limits; they cannot exce
 
 - **Engine first.** Rust owns download state, networking, scheduling, disk writes, recovery, and errors. The UI sends commands and renders authoritative snapshots.
 - **Correctness before feature count.** Every priority has an exit gate. A feature is not shipped because it exists; it ships when its failure modes are understood and tested.
-- **Safe by default.** Never overwrite an existing file, never shut down silently, never delete data as a side effect of canceling.
+- **Safe by default.** Ordinary downloads never overwrite existing files. Explicit synchronization replacement is limited to unchanged OSDM-owned copies under the verified, atomic, crash-recoverable policy in `docs/synchronization-replacement.md`. Never shut down silently or delete data as a side effect of canceling.
 - **Measured performance.** Publish throughput numbers from repeatable benchmarks, not multipliers.
 - **Local-first privacy.** No telemetry by default. Credentials are protected at rest. Signed URLs are treated as secrets.
 - **Small dependencies.** Add a library only when it removes more complexity than it introduces.
@@ -723,7 +723,15 @@ metadata and navigation, stopped destination edits, session-only Basic credentia
 same-volume temporary storage, multi-select deletion, unfinished grouping,
 completion/progress/minimized dialogs, silent/immediate-start options, native
 completed-file drag-out, scanner/sound controls, onboarding, and toolbar/column
-customization. Localization is skipped at the user's request. P2–P4 remain planned.
+customization. Localization is skipped at the user's request. P2 now includes
+desktop batch/clipboard/drop capture, persistent named queues and UTC schedules,
+safe changed-source revision checks, the CLI with desktop queue triggers,
+Chromium/Firefox extension targets and protected native-message forwarding,
+Windows startup, and explicit cancellable completion actions in source. P3–P4
+remain planned. The ordering decision is recorded in `docs/p2-automation.md`;
+behavior, synchronization's current revision-only implementation, and outstanding live
+browser/native release gates are in `docs/p2-validation.md`. Neither P1 nor P2 is
+declared complete by these implementations.
 
 Download Later now persists directly as Paused before scheduler admission; resume
 starts the transfer. Column sorting and clear-completed-history are available.
@@ -739,7 +747,10 @@ Immediate work:
    refusal, and queue preservation across an upgrade.
 3. Complete the P1 release gate: native accessibility validation,
    and preservation of settings/queue/history across updates.
-4. Move to P2 browser capture and batch/CLI once the desktop workflows are stable.
-5. Implement scheduling and named queues only after batch/CLI meets its persistence,
-   idempotency, and noninteractive automation gate (§6.3.2).
+4. Validate P2 browser capture and native helper registration in Chromium and
+   Firefox, including reconnect, cancellation, permissions and safe fallback.
+5. Complete P2's interactive scheduling, Windows completion-action, and tool-archive
+   checks in `docs/p2-validation.md`. Implement the approved synchronization-only
+   replacement exception under `docs/synchronization-replacement.md`; it is not
+   enabled by the policy change alone.
 6. Keep P3 and P4 as prioritized backlog items; do not schedule them until their dependencies are met.
