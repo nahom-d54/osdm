@@ -1,0 +1,127 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag and version files
+        shell: pwsh
+        run: |
+          $version = (Get-Content -Raw src-tauri/tauri.conf.json | ConvertFrom-Json).version
+          $packageVersion = (Get-Content -Raw package.json | ConvertFrom-Json).version
+          $cargoText = Get-Content -Raw src-tauri/Cargo.toml
+          if ($cargoText -notmatch '(?m)^version\s*=\s*"([^"]+)"') {
+            throw "Could not read the version from src-tauri/Cargo.toml."
+          }
+          $cargoVersion = $Matches[1]
+          if ($packageVersion -ne $version -or $cargoVersion -ne $version) {
+            throw "Version mismatch: tauri.conf.json=$version package.json=$packageVersion src-tauri/Cargo.toml=$cargoVersion."
+          }
+          if ("v$version" -ne $env:GITHUB_REF_NAME) {
+            throw "Tag $env:GITHUB_REF_NAME does not match the application version v$version."
+          }
+          Write-Host "Releasing OSDM v$version from $env:GITHUB_SHA"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run engine tests
+        run: cargo test -p download-engine
+
+      - name: Build frontend
+        run: pnpm build
+
+      - name: Build installer and publish release
+        id: tauri
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Only required once signed updater artifacts are enabled.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "OSDM ${{ github.ref_name }}"
+          releaseBody: |
+            **OSDM __VERSION__** for Windows 10/11.
+
+            This release was built automatically from a version tag.
+
+            ### Highlights
+
+            - Adaptive, recoverable segmented HTTP(S) downloads
+            - Automatic recovery from rate limits and interrupted connections
+            - Optional SHA-256 verification before publication
+            - Pause, resume, retry, and source-URL replacement
+
+            `SHA256SUMS.txt` is attached to this release for installer verification. OSDM is alpha software; keep backups of important files and review the documentation before upgrading.
+
+            **Full documentation:** https://github.com/${{ github.repository }}#readme
+          releaseDraft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          args: --bundles nsis
+
+      - name: Publish SHA-256 checksums
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $roots = @(
+            "target/release/bundle/nsis",
+            "src-tauri/target/release/bundle/nsis"
+          )
+          $installers = @()
+          foreach ($root in $roots) {
+            if (Test-Path $root) {
+              $installers += Get-ChildItem "$root/*.exe"
+            }
+          }
+          if (-not $installers) {
+            throw "No NSIS installer was produced."
+          }
+          $lines = foreach ($installer in $installers) {
+            $hash = (Get-FileHash -Algorithm SHA256 $installer.FullName).Hash.ToLowerInvariant()
+            "$hash  $($installer.Name)"
+          }
+          $lines | Set-Content -Encoding ascii SHA256SUMS.txt
+          gh release upload $env:GITHUB_REF_NAME SHA256SUMS.txt --clobber
