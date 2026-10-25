@@ -258,10 +258,17 @@ jobs:
 
           - Windows: NSIS installer
           - Linux: Debian package for Ubuntu 24.04 and newer
+          - Capture tools: separate CLI/native-host archives with extension source and setup scripts (manual registration; extensions are not store-signed)
 
           SHA256SUMS.txt covers every downloadable asset.
 
           OSDM is alpha software. Keep backups of important files and review the documentation before upgrading.
+
+          Database upgrades may prevent reopening application data with older binaries.
+          Capture/automation is a preview: synchronization publishes separate revisions, not in-place replacements; the full P2 gate remains open.
+
+          **Changes and known limitations:** https://github.com/${{ github.repository }}/blob/$RELEASE_TAG/CHANGELOG.md
+          **Capture validation:** https://github.com/${{ github.repository }}/blob/$RELEASE_TAG/docs/p2-validation.md
 
           **Full documentation:** https://github.com/${{ github.repository }}#readme
           EOF

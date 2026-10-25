@@ -6,6 +6,23 @@ All notable changes to OSDM are documented here. This project follows
 
 ## [Unreleased]
 
+### Planned
+
+- Dynamic bandwidth allocation with per-download priorities.
+- Storage-aware reservations and duplicate detection.
+- Mirror benchmarking and failover.
+- Predictive scheduling, automatic file organization, and media detection.
+
+See [the phased roadmap](docs/intelligent-downloads.md) for acceptance gates.
+
+## [0.1.3-alpha.1] - 2026-10-25
+
+Capture and automation preview; **not completion of the P2 release gate**.
+Synchronization still publishes separate revisions, not in-place replacements.
+Extensions are unsigned source targets; store distribution and remaining live
+validation are outstanding. Back up application data before upgrading: schema 5
+databases cannot be reopened by older binaries. See `docs/p2-validation.md`.
+
 ### Added
 
 - P2 desktop batch/clipboard/drop capture, named queue management/navigation,
@@ -26,8 +43,7 @@ All notable changes to OSDM are documented here. This project follows
   signing and Chrome draft-only uploads via CI secrets; no automatic publication.
 - Initial P2 headless CLI with batch URL/file-list input, durable queue-only
   admission, repeat-run duplicate ID reuse, start-queue, and JSON Lines results.
-  Browser capture, desktop batch input, and scheduling remain planned; this is
-  not completion of the P2 gate. See `crates/cli/README.md` for safety limits.
+  See `crates/cli/README.md` for safety limits.
 - P1 category destination suggestions with built-in and custom categories,
   ordered domain/extension rules, folder overrides, and persistent preferences.
 - Optional last-used folder remembering and category-routing regression tests.
@@ -92,17 +108,6 @@ All notable changes to OSDM are documented here. This project follows
 - Fixed Windows desktop test binaries failing before the harness loaded because
   they lacked the Common-Controls v6 application manifest.
 
-## [Unreleased]
-
-### Planned
-
-- Dynamic bandwidth allocation with per-download priorities.
-- Storage-aware reservations and duplicate detection.
-- Mirror benchmarking and failover.
-- Predictive scheduling, automatic file organization, and media detection.
-
-See [the phased roadmap](docs/intelligent-downloads.md) for acceptance gates.
-
 ## [0.1.0-alpha.1] - 2026-10-25
 
 First public alpha. Distributed as a Windows NSIS installer.
@@ -148,7 +153,8 @@ First public alpha. Distributed as a Windows NSIS installer.
 - SHA-256 verification requires a trusted reference; a computed hash alone does
   not establish authenticity.
 
-[Unreleased]: https://github.com/nahom-d54/osdm/compare/v0.1.2-alpha.1...HEAD
+[Unreleased]: https://github.com/nahom-d54/osdm/compare/v0.1.3-alpha.1...HEAD
+[0.1.3-alpha.1]: https://github.com/nahom-d54/osdm/releases/tag/v0.1.3-alpha.1
 [0.1.2-alpha.1]: https://github.com/nahom-d54/osdm/releases/tag/v0.1.2-alpha.1
 [0.1.1-alpha.1]: https://github.com/nahom-d54/osdm/releases/tag/v0.1.1-alpha.1
 [0.1.0-alpha.1]: https://github.com/nahom-d54/osdm/releases/tag/v0.1.0-alpha.1
