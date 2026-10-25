@@ -34,8 +34,13 @@ jobs:
             throw "Could not read the version from src-tauri/Cargo.toml."
           }
           $cargoVersion = $Matches[1]
-          if ($packageVersion -ne $version -or $cargoVersion -ne $version) {
-            throw "Version mismatch: tauri.conf.json=$version package.json=$packageVersion src-tauri/Cargo.toml=$cargoVersion."
+          $engineText = Get-Content -Raw crates/download-engine/Cargo.toml
+          if ($engineText -notmatch '(?m)^version\s*=\s*"([^"]+)"') {
+            throw "Could not read the version from crates/download-engine/Cargo.toml."
+          }
+          $engineVersion = $Matches[1]
+          if ($packageVersion -ne $version -or $cargoVersion -ne $version -or $engineVersion -ne $version) {
+            throw "Version mismatch: tauri.conf.json=$version package.json=$packageVersion src-tauri/Cargo.toml=$cargoVersion crates/download-engine/Cargo.toml=$engineVersion."
           }
           if ("v$version" -ne $env:GITHUB_REF_NAME) {
             throw "Tag $env:GITHUB_REF_NAME does not match the application version v$version."
