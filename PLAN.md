@@ -727,8 +727,12 @@ customization. Localization is skipped at the user's request. P2 now includes
 desktop batch/clipboard/drop capture, persistent named queues and UTC schedules,
 safe changed-source revision checks, the CLI with desktop queue triggers,
 Chromium/Firefox extension targets and protected native-message forwarding,
-Windows startup, and explicit cancellable completion actions in source. P3–P4
-remain planned. The ordering decision is recorded in `docs/p2-automation.md`;
+Windows startup, and explicit cancellable completion actions in source. P3 has
+started with bounded HLS parsing in `crates/media-capture` and engine-owned,
+budgeted, cancellable manifest fetching with redirect-origin authorization;
+streaming capture, merging and Site Grabber remain planned. The scoped early-start decision
+and remaining P3 gates are in `docs/p3-retrieval.md`. P4 remains planned.
+The P2 ordering decision is recorded in `docs/p2-automation.md`;
 behavior, synchronization's current revision-only implementation, and outstanding live
 browser/native release gates are in `docs/p2-validation.md`. Neither P1 nor P2 is
 declared complete by these implementations.
@@ -753,4 +757,4 @@ Immediate work:
    checks in `docs/p2-validation.md`. Implement the approved synchronization-only
    replacement exception under `docs/synchronization-replacement.md`; it is not
    enabled by the policy change alone.
-6. Keep P3 and P4 as prioritized backlog items; do not schedule them until their dependencies are met.
+6. Continue P3 under the scoped decision in `docs/p3-retrieval.md`; keep outstanding P1/P2 gates visible. P4 remains backlog.

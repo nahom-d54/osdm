@@ -1030,6 +1030,7 @@ dependencies = [
  "axum",
  "futures-util",
  "httpdate",
+ "osdm-media-capture",
  "reqwest 0.12.28",
  "same-file",
  "serde",
@@ -2946,6 +2947,14 @@ dependencies = [
  "tempfile",
  "tokio",
  "winreg",
+]
+
+[[package]]
+name = "osdm-media-capture"
+version = "0.1.3-alpha.1"
+dependencies = [
+ "thiserror 2.0.21",
+ "url",
 ]
 
 [[package]]

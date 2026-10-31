@@ -4,6 +4,7 @@ mod automation;
 mod cleanup;
 mod engine;
 mod integrity;
+mod media;
 mod model;
 mod retry;
 mod storage;
@@ -16,11 +17,14 @@ mod transfer;
 pub use automation::*;
 pub use engine::Engine;
 pub use model::*;
+pub use osdm_media_capture as media_capture;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("{0}")]
+    Media(#[from] osdm_media_capture::Error),
     #[error("{0}")]
     Invalid(String),
     #[error("download not found")]

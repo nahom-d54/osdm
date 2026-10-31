@@ -93,6 +93,7 @@ pub(crate) struct Inner {
     pub config: Config,
     pub schedules_enabled: bool,
     pub client: reqwest::Client,
+    pub media: crate::media::Inspector,
     pub credentials: Mutex<HashMap<DownloadId, (String, BasicCredentials)>>,
     pub captured_headers: Mutex<HashMap<DownloadId, (String, CapturedHeaders)>>,
     pub connections: Arc<Semaphore>,
@@ -262,6 +263,7 @@ impl Engine {
             config,
             schedules_enabled,
             client,
+            media: crate::media::Inspector::new()?,
             credentials: Mutex::new(HashMap::new()),
             captured_headers: Mutex::new(HashMap::new()),
             events,
@@ -858,6 +860,7 @@ impl Engine {
         {
             let mut data = self.inner.data.lock().await;
             if !data.running.is_empty()
+                || self.inner.media.operations.try_write().is_err()
                 || !data.synchronizing.is_empty()
                 || !data.automation.pending_captures.is_empty()
                 || data.downloads.iter().any(|d| {
@@ -880,6 +883,7 @@ impl Engine {
 
     /// Pauses all work and waits for workers to drain. This engine cannot be restarted.
     pub async fn shutdown(&self) -> Result<()> {
+        self.inner.media.shutdown.cancel();
         let synchronizing: Vec<_> = {
             let mut data = self.inner.data.lock().await;
             data.stopped = true;
@@ -915,6 +919,7 @@ impl Engine {
         for id in synchronizing {
             self.wait_sync_idle(id).await;
         }
+        let _media_drained = self.inner.media.operations.write().await;
         let data = self.inner.data.lock().await;
         let mut ownership = self.inner.database_lock.lock().await;
         if ownership.is_none() {

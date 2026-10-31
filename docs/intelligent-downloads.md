@@ -86,7 +86,7 @@ Planned, not implemented in phase 1.
 | --- | --- | --- |
 | Predictive download scheduling | Medium | Maintain local time-of-day throughput history with sample confidence. Schedule nonurgent transfers in better windows, with a deadline and Run now override. Sparse data, clock changes, offline periods, and app restarts must not strand a job. |
 | Intelligent file organization | Medium | Use MIME type, safe extensions, and user-defined project/category rules to propose/create folders. Allow per-download overrides and conflict handling. Never move existing files implicitly or infer project membership from arbitrary untrusted path components. |
-| Smart media detection | Medium | Identify direct downloadable audio/video using MIME and content metadata; detect supported manifest/stream formats and expose available choices. Explicitly distinguish downloadable sources from recognized-but-unsupported formats. Add protocol-specific downloading only with bounded parsing, cancellation, and integrity/recovery coverage. |
+| Smart media detection | Medium | Bounded basic HLS quality choices and complete unencrypted VOD segment lists are implemented in `crates/media-capture`; unsupported semantics are rejected. Engine-owned manifest fetching shares connection/bandwidth/retry budgets, checks redirect authorization, sends no credentials, and supports cancellation/shutdown. Browser detection, direct-media inspection, DASH, segment fetching, persistence and merging remain planned. See [P3 scope](p3-retrieval.md). Protocol-specific downloading requires cancellation and integrity/recovery coverage. |
 
 The scheduling and organization features are opt-in. Learning stays local and
 must not record credentials or signed URLs as analytics keys. Media and mirror

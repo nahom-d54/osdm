@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+osdm-media-capture = { path = "../media-capture" }
 futures-util = "0.3"
 httpdate = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }

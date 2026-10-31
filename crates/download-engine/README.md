@@ -46,6 +46,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - `update_url` replaces the source of paused/failed downloads and leaves them paused. Resume reuses checkpoints only when range support, validator, and length still match; otherwise it restarts safely.
 - Computes SHA-256 before publication with bounded memory and cancellable reads. `DownloadRequest.expected_sha256` optionally supplies a 64-digit publisher/user checksum. A mismatch fails without publication; retry discards that partial and downloads fresh bytes. Without a reference, `Computed` is distinct from `Verified`.
 - `probe` reads the final URL, Content-Disposition filename, content type, length, and range support without enqueueing. Path components are stripped from server filenames; the desktop workflow applies filesystem-specific sanitization.
+- `inspect_hls(source, allowed_redirect_origins, cancellation)` fetches and inspects
+  one HLS manifest using the engine's global/host connections, bandwidth budget,
+  bounded retry policy and shared cooldowns. Reads are capped at 1 MiB with a
+  60-second overall deadline. Redirects are validated before sending, require
+  explicit approval for other origins, reject HTTPS downgrade and loops, and
+  reacquire the destination host's budget. No credentials or referrer are sent.
+  Returned variant/segment URLs are not fetched or implicitly authorized.
+  Caller cancellation and engine shutdown drain the operation; idle shutdown
+  refuses active inspection. This is not yet a media download/merge API.
 - `reorder` requires every history/queue ID exactly once.
 - `subscribe` provides full snapshots at up to 4 Hz. Refresh using `snapshot` after subscriber lag.
 - Zero bandwidth limit means unlimited; concurrency settings are fixed for an engine's lifetime.
@@ -79,6 +88,8 @@ The database contains full source URLs, including signed query strings. Do not p
 - Direct URLs only; explicit session-only Basic auth and origin-scoped captured
   Cookie/Authorization headers are supported. There is no automatic browser-cookie
   export, persistent custom headers, proxy configuration, or media extraction.
+  Bounded, unauthenticated HLS inspection is available through `inspect_hls`;
+  it does not create durable media jobs or publish media files.
 - No HTTP response cache: file bodies are streamed to disk once, and durable checkpoints already avoid re-fetching committed ranges.
 - SHA-256 verification needs a trustworthy reference supplied by the user/publisher. Computing a hash alone does not establish authenticity; chunk-level corruption cannot be localized without trusted per-chunk hashes.
 - Partial cleanup is explicit, not automatic. Unrecorded `.part` files are left alone.

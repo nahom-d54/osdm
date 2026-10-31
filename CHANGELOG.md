@@ -6,6 +6,12 @@ All notable changes to OSDM are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+
+- Engine-owned bounded HLS manifest inspection with explicit redirect-origin
+  authorization, shared transfer budgets, cancellation and shutdown draining.
+  This is an inspection API, not completed P3 media capture or Site Grabber.
+
 ### Planned
 
 - Dynamic bandwidth allocation with per-download priorities.

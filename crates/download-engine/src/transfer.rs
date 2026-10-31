@@ -28,7 +28,7 @@ fn host(url: &str) -> Result<String> {
         .ok_or_else(|| Error::Invalid("missing host".into()))
 }
 
-async fn permits(
+pub(crate) async fn permits(
     inner: &Inner,
     url: &str,
     token: &CancellationToken,
@@ -209,7 +209,7 @@ async fn probe_once(
 
 /// Read the server's rate-limit signal from a 429/503 response. Both the delay
 /// and the fact that the host asked us to slow down are needed by callers.
-fn retry_hint(response: &Response) -> RetryHint {
+pub(crate) fn retry_hint(response: &Response) -> RetryHint {
     RetryHint {
         after: response
             .headers()
@@ -618,7 +618,7 @@ async fn segment(
     }
 }
 
-fn retryable(error: &Error) -> bool {
+pub(crate) fn retryable(error: &Error) -> bool {
     matches!(
         error,
         Error::Network(_) | Error::Length | Error::Http(408 | 429 | 500..=599)
@@ -628,7 +628,7 @@ fn retryable(error: &Error) -> bool {
 /// Wait out the retry delay. When the server rate limited us, the whole host is
 /// paused for the same window so parallel workers and other downloads stop
 /// adding load instead of each retrying on its own schedule.
-async fn wait_before_retry(
+pub(crate) async fn wait_before_retry(
     inner: &Inner,
     url: &str,
     attempt: u32,
@@ -861,7 +861,7 @@ async fn checkpoint(
     inner.save(&data, id).await
 }
 
-async fn throttle(inner: &Inner, bytes: u64, token: &CancellationToken) -> Result<()> {
+pub(crate) async fn throttle(inner: &Inner, bytes: u64, token: &CancellationToken) -> Result<()> {
     loop {
         // Register before reading the rate so a settings change cannot be lost
         // between reserving bandwidth and beginning the wait.
