@@ -42,6 +42,7 @@ fn request(origin: &str, directory: &Path) -> MediaJobRequest {
         description: Some("Explicit quality".into()),
         subtitle_url: None,
         category_id: None,
+        dash_tracks: vec![],
     }
 }
 async fn terminal(engine: &Engine, id: uuid::Uuid) -> download_engine::MediaJob {
@@ -536,6 +537,161 @@ async fn real_ffmpeg_remuxes_complete_vod_and_never_overwrites_a_racing_output()
         tokio::fs::read(&req.destination).await.unwrap(),
         b"user content"
     );
+    engine.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn real_ffmpeg_dash_job_merges_only_explicitly_selected_tracks() {
+    let Some(ffmpeg) = ffmpeg() else {
+        eprintln!("requires installed ffmpeg or OSDM_TEST_FFMPEG");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let assets = dir.path().join("dash");
+    tokio::fs::create_dir(&assets).await.unwrap();
+    let generated = tokio::process::Command::new(&ffmpeg)
+        .current_dir(&assets)
+        .args([
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=64x64:rate=10",
+            "-t",
+            "2",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-threads",
+            "1",
+            "-f",
+            "dash",
+            "-seg_duration",
+            "1",
+            "-use_template",
+            "0",
+            "-use_timeline",
+            "0",
+            "-init_seg_name",
+            "init-$RepresentationID$.m4s",
+            "-media_seg_name",
+            "chunk-$RepresentationID$-$Number%05d$.m4s",
+            "out.mpd",
+        ])
+        .status()
+        .await
+        .unwrap();
+    assert!(generated.success());
+    let mut init = None;
+    let mut chunks = Vec::new();
+    let mut entries = tokio::fs::read_dir(&assets).await.unwrap();
+    while let Some(entry) = entries.next_entry().await.unwrap() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with("init-") {
+            init = Some((name, tokio::fs::read(entry.path()).await.unwrap()));
+        } else if name.starts_with("chunk-") {
+            chunks.push((name, tokio::fs::read(entry.path()).await.unwrap()));
+        }
+    }
+    chunks.sort_by(|a, b| a.0.cmp(&b.0));
+    let (init_name, init_bytes) = init.expect("dash initialization segment");
+    assert!(!chunks.is_empty(), "dash media segments");
+    let mut mpd = format!(
+        "<MPD type=\"static\"><Period><AdaptationSet id=\"video\" mimeType=\"video/mp4\"><Representation id=\"v\" bandwidth=\"100000\" width=\"64\" height=\"64\"><SegmentList duration=\"1\"><Initialization sourceURL=\"{init_name}\"/>"
+    );
+    for (name, _) in &chunks {
+        mpd.push_str(&format!("<SegmentURL media=\"{name}\"/>"));
+    }
+    mpd.push_str("</SegmentList></Representation></AdaptationSet></Period></MPD>");
+    let mut router = Router::new().route("/vod.mpd", get(move || async move { mpd }));
+    for (name, bytes) in std::iter::once((init_name, init_bytes)).chain(chunks) {
+        let bytes = Arc::new(bytes);
+        router = router.route(
+            &format!("/{name}"),
+            get(move || {
+                let bytes = bytes.clone();
+                async move { bytes.as_ref().clone() }
+            }),
+        );
+    }
+    let source = server(router).await;
+    let engine = Engine::open(dir.path().join("dash.db"), Config::default())
+        .await
+        .unwrap();
+    let plan = engine
+        .inspect_dash(
+            &format!("{}/vod.mpd", source.origin),
+            &[],
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(plan.tracks.len(), 1);
+    let key = download_engine::dash_track_key(&plan.tracks[0]);
+    let mut req = request(&source.origin, dir.path());
+    req.url = format!("{}/vod.mpd", source.origin);
+    req.ffmpeg_path = ffmpeg.clone();
+    req.dash_tracks = vec![key];
+    let id = engine.create_media_job(req).await.unwrap();
+    let job = terminal(&engine, id).await;
+    assert_eq!(job.state, MediaJobState::Completed, "{:?}", job.error);
+    let output = tokio::fs::read(&job.destination).await.unwrap();
+    assert_eq!(&output[..4], &[0x1a, 0x45, 0xdf, 0xa3]);
+    let ffprobe = ffmpeg.with_file_name(if cfg!(windows) {
+        "ffprobe.exe"
+    } else {
+        "ffprobe"
+    });
+    if ffprobe.is_file() {
+        let probe = tokio::process::Command::new(ffprobe)
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "v",
+                "-show_entries",
+                "stream=codec_name",
+                "-of",
+                "csv=p=0",
+            ])
+            .arg(&job.destination)
+            .output()
+            .await
+            .unwrap();
+        assert!(probe.status.success());
+        assert!(String::from_utf8_lossy(&probe.stdout).contains("h264"));
+    }
+    engine.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn dash_job_rejects_unapproved_or_unknown_representations_before_any_download() {
+    let source = server(Router::new().route(
+        "/vod.mpd",
+        get(|| async {
+            "<MPD type=\"static\"><Period><AdaptationSet id=\"video\" mimeType=\"video/mp4\"><Representation id=\"v\" bandwidth=\"1\"><SegmentList duration=\"1\"><Initialization sourceURL=\"init.m4s\"/><SegmentURL media=\"one.m4s\"/></SegmentList></Representation></AdaptationSet></Period></MPD>"
+        }),
+    ))
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let engine = Engine::open(dir.path().join("dash.db"), Config::default())
+        .await
+        .unwrap();
+    let mut req = request(&source.origin, dir.path());
+    req.url = format!("{}/vod.mpd", source.origin);
+    req.dash_tracks = vec!["not-a-selected-representation".into()];
+    assert!(engine.create_media_job(req.clone()).await.is_err());
+    assert!(engine.list_media_jobs().await.is_empty());
+    assert!(engine.snapshot().await.is_empty());
+    // The default job request never inspects the DASH manifest when a key is
+    // supplied for a source whose resources need another origin.
+    req.dash_tracks = vec![];
+    req.url = format!("{}/vod", source.origin);
+    assert!(engine.create_media_job(req).await.is_err());
     engine.shutdown().await.unwrap();
 }
 

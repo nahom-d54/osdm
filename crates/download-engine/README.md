@@ -61,14 +61,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
   timescale and explicit `SegmentList` segments. `select_dash_tracks` resolves an
   explicit video/audio choice; nothing is auto-selected or fetched.
 - `create_media_job` implements explicit-quality HLS capture for standalone
-  unencrypted MPEG-TS VOD. Segment children use ordinary admission, checkpointing
-  and retries; the job then remuxes local files through an explicitly configured
-  FFmpeg executable, independently decodes the result, hashes the exact bytes and
-  publishes with the same no-overwrite/recovery rules as ordinary downloads.
+  unencrypted MPEG-TS VOD, and explicit-representation static DASH capture for
+  fragmented-MP4 `SegmentList` tracks (initialization segment first per track).
+  Segment children use ordinary admission, checkpointing and retries; the job then
+  remuxes local files through an explicitly configured FFmpeg executable,
+  independently decodes the result, hashes the exact bytes and publishes with the
+  same no-overwrite/recovery rules as ordinary downloads.
   Optional selected SRT/WebVTT is fetched boundedly from an approved origin and
   embedded. Jobs reopen paused; `pause/resume/cancel_media_job` are cancellable and
-  drained on shutdown. DASH job downloads, live/DRM and rendition discovery are
-  not implemented.
+  drained on shutdown. Live/DRM capture and automatic rendition discovery are not
+  implemented.
 - `create_site_project`, `list_site_projects`, `control_site_project` and
   `queue_site_resources` implement bounded, resumable Site Grabber projects. One
   engine-budgeted request at a time, robots first, exact origin/path scope,
@@ -129,7 +131,7 @@ The database contains full source URLs, including signed query strings. Do not p
 - Media jobs keep their workspaces and completed artifact identity anchors; there
   is no media-job removal/cleanup API yet. Merged SHA-256 is locally computed, not
   publisher-authenticated. FFmpeg runs as a trusted local executable without an
-  OS-level CPU/memory sandbox, and DASH job downloads are not implemented.
+  OS-level CPU/memory sandbox.
 
 ## Capture and automation
 

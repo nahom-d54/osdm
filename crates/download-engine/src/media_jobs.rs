@@ -28,6 +28,9 @@ pub struct MediaJobRequest {
     pub subtitle_url: Option<String>,
     #[serde(default)]
     pub category_id: Option<String>,
+    /// Explicit DASH representation choices from `inspect_dash`; empty means HLS.
+    #[serde(default)]
+    pub dash_tracks: Vec<String>,
 }
 
 impl std::fmt::Debug for MediaJobRequest {
@@ -35,6 +38,7 @@ impl std::fmt::Debug for MediaJobRequest {
         f.debug_struct("MediaJobRequest")
             .field("url", &"[redacted]")
             .field("destination", &self.destination)
+            .field("dash_tracks", &self.dash_tracks.len())
             .finish_non_exhaustive()
     }
 }
@@ -66,10 +70,27 @@ pub struct MediaJob {
     pub error: Option<String>,
 }
 
+/// One merge input group. Fragmented MP4 keeps its initialization segment first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum TrackContainer {
+    MpegTs,
+    FragmentedMp4,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct SavedTrack {
+    sources: Vec<String>,
+    container: TrackContainer,
+}
+
 // Deliberately no Debug: source URLs (including query credentials) are secrets.
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct SavedJob {
     pub view: MediaJob,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    tracks: Vec<SavedTrack>,
+    /// Pre-DASH payloads stored one flat TS source list; migrated on load.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     sources: Vec<String>,
     ffmpeg: PathBuf,
     directory: PathBuf,
@@ -92,10 +113,62 @@ impl SavedJob {
         self.view.children.contains(&download.id)
             || download.destination.parent() == Some(self.directory.as_path())
     }
+
+    /// Upgrade an older single-track payload without changing any child identity.
+    pub(crate) fn migrate_legacy(&mut self) {
+        if self.tracks.is_empty() && !self.sources.is_empty() {
+            self.tracks.push(SavedTrack {
+                sources: std::mem::take(&mut self.sources),
+                container: TrackContainer::MpegTs,
+            });
+        }
+    }
+
+    fn total_sources(&self) -> usize {
+        self.tracks.iter().map(|track| track.sources.len()).sum()
+    }
+
+    fn source_at(&self, flat: usize) -> Option<(&str, TrackContainer)> {
+        let mut remaining = flat;
+        for track in &self.tracks {
+            if remaining < track.sources.len() {
+                return Some((track.sources[remaining].as_str(), track.container));
+            }
+            remaining -= track.sources.len();
+        }
+        None
+    }
+
+    fn child_path(&self, flat: usize) -> Option<PathBuf> {
+        let (_, container) = self.source_at(flat)?;
+        let extension = match container {
+            TrackContainer::MpegTs => "ts",
+            TrackContainer::FragmentedMp4 => "m4s",
+        };
+        Some(self.directory.join(format!("{flat:08}.{extension}")))
+    }
 }
 
 fn invalid(message: &str) -> Error {
     Error::Invalid(message.into())
+}
+
+/// Manifest references are not network authorization. Every fetched media
+/// resource must match an explicitly approved origin and never downgrade TLS.
+fn approve(
+    origins: &HashSet<String>,
+    secure_source: bool,
+    source: &crate::media_capture::MediaUrl,
+    what: &str,
+) -> Result<()> {
+    let url = reqwest::Url::parse(source.as_str()).map_err(|_| invalid(what))?;
+    if !origins.contains(&url.origin().ascii_serialization()) {
+        return Err(invalid("media resource origin requires explicit approval"));
+    }
+    if secure_source && url.scheme() != "https" {
+        return Err(invalid("media HTTPS downgrade is unsupported"));
+    }
+    Ok(())
 }
 
 impl Engine {
@@ -149,23 +222,76 @@ impl Engine {
             origins.insert(allowed.clone());
         }
         let cancellation = CancellationToken::new();
-        let segments = match self
-            .inspect_hls(source.as_str(), &request.allowed_origins, &cancellation)
-            .await?
-        {
-            Manifest::Vod { segments } => segments,
-            Manifest::Master { .. } => {
-                return Err(invalid(
-                    "select an explicit HLS quality before creating a media job",
-                ));
+        let tracks = if request.dash_tracks.is_empty() {
+            let segments = match self
+                .inspect_hls(source.as_str(), &request.allowed_origins, &cancellation)
+                .await?
+            {
+                Manifest::Vod { segments } => segments,
+                Manifest::Master { .. } => {
+                    return Err(invalid(
+                        "select an explicit HLS quality before creating a media job",
+                    ));
+                }
+            };
+            for segment in &segments {
+                approve(
+                    &origins,
+                    secure_source,
+                    &segment.source,
+                    "invalid media segment",
+                )?;
             }
+            vec![SavedTrack {
+                sources: segments
+                    .into_iter()
+                    .map(|segment| segment.source.as_str().to_owned())
+                    .collect(),
+                container: TrackContainer::MpegTs,
+            }]
+        } else {
+            // An explicit video/audio representation choice is mandatory; never
+            // infer a quality from bandwidth or manifest order.
+            let plan = self
+                .inspect_dash(source.as_str(), &request.allowed_origins, &cancellation)
+                .await?;
+            let selected = crate::select_dash_tracks(&plan, &request.dash_tracks)?;
+            let mut tracks = Vec::new();
+            for track in selected {
+                let mut sources = Vec::new();
+                if let Some(initialization) = &track.initialization {
+                    approve(
+                        &origins,
+                        secure_source,
+                        initialization,
+                        "invalid DASH initialization segment",
+                    )?;
+                    sources.push(initialization.as_str().to_owned());
+                }
+                for segment in &track.segments {
+                    approve(
+                        &origins,
+                        secure_source,
+                        &segment.source,
+                        "invalid DASH segment",
+                    )?;
+                    sources.push(segment.source.as_str().to_owned());
+                }
+                if sources.is_empty()
+                    || sources.len() > crate::media_capture::MAX_ENTRIES.saturating_div(2)
+                {
+                    return Err(invalid("unsupported DASH track size"));
+                }
+                tracks.push(SavedTrack {
+                    sources,
+                    container: TrackContainer::FragmentedMp4,
+                });
+            }
+            tracks
         };
-        for segment in &segments {
-            let url = reqwest::Url::parse(segment.source.as_str())
-                .map_err(|_| invalid("invalid media segment"))?;
-            if !origins.contains(&url.origin().ascii_serialization()) {
-                return Err(invalid("media segment origin requires explicit approval"));
-            }
+        let total_sources: usize = tracks.iter().map(|track| track.sources.len()).sum();
+        if total_sources == 0 || total_sources > crate::media_capture::MAX_ENTRIES {
+            return Err(crate::media_capture::Error::Limit.into());
         }
         let subtitle = if let Some(source) = &request.subtitle_url {
             let source = crate::media_capture::MediaUrl::parse(source)?;
@@ -226,14 +352,12 @@ impl Engine {
                 state: MediaJobState::Paused,
                 children: vec![],
                 completed_segments: 0,
-                total_segments: segments.len(),
+                total_segments: total_sources,
                 sha256: None,
                 error: None,
             },
-            sources: segments
-                .into_iter()
-                .map(|s| s.source.as_str().to_owned())
-                .collect(),
+            tracks,
+            sources: Vec::new(),
             ffmpeg: tokio::fs::canonicalize(request.ffmpeg_path).await?,
             directory: parent.join(format!(".osdm-media-{id}")),
             marker: uuid::Uuid::new_v4().to_string(),
@@ -423,12 +547,18 @@ impl Engine {
         if job.ready {
             return self.publish_media_job(id, token).await;
         }
-        for index in 0..job.sources.len() {
+        for index in 0..job.total_sources() {
             check_cancel(self, token)?;
+            let (source, container) = job
+                .source_at(index)
+                .map(|(url, container)| (url.to_owned(), container))
+                .ok_or_else(|| invalid("media plan is missing a source"))?;
+            let destination = job
+                .child_path(index)
+                .ok_or_else(|| invalid("media plan is missing a source path"))?;
             let child = if let Some(child) = job.view.children.get(index) {
                 *child
             } else {
-                let destination = job.directory.join(format!("{index:08}.ts"));
                 // Recover the narrow crash window after enqueue's durable paused
                 // child insertion but before the parent's identity checkpoint.
                 let existing = self
@@ -437,7 +567,7 @@ impl Engine {
                     .into_iter()
                     .find(|d| d.destination == destination);
                 let child = if let Some(existing) = existing {
-                    if existing.url != job.sources[index] {
+                    if existing.url != source {
                         return Err(invalid(
                             "media child reservation conflicts with persisted plan",
                         ));
@@ -445,8 +575,8 @@ impl Engine {
                     existing.id
                 } else {
                     self.enqueue_paused(DownloadRequest {
-                        url: job.sources[index].clone(),
-                        destination,
+                        url: source.clone(),
+                        destination: destination.clone(),
                         expected_sha256: None,
                     })
                     .await?
@@ -484,24 +614,24 @@ impl Engine {
                     .into_iter()
                     .find(|d| d.id == child)
                     .ok_or(Error::NotFound)?;
-                if download.url != job.sources[index]
-                    || download.destination != job.directory.join(format!("{index:08}.ts"))
-                {
+                if download.url != source || download.destination != destination {
                     return Err(invalid("media segment identity changed"));
                 }
                 match download.state {
                     DownloadState::Completed => {
-                        if download.destination != job.directory.join(format!("{index:08}.ts")) {
-                            return Err(invalid("media segment identity changed"));
-                        }
                         let hash =
                             hash_file(&download.destination, token, &self.inner.media.shutdown)
                                 .await?;
                         if download.sha256.as_deref() != Some(&hash.0) {
                             return Err(Error::Integrity);
                         }
-                        validate_ts(&download.destination, token, &self.inner.media.shutdown)
-                            .await?;
+                        validate_segment(
+                            &download.destination,
+                            container,
+                            token,
+                            &self.inner.media.shutdown,
+                        )
+                        .await?;
                         break;
                     }
                     DownloadState::Failed | DownloadState::Canceled | DownloadState::Paused => {
@@ -560,11 +690,35 @@ impl Engine {
         } else {
             None
         };
-        let files: Vec<_> = (0..job.sources.len())
-            .map(|index| job.directory.join(format!("{index:08}.ts")))
-            .collect();
+        let mut tracks = Vec::new();
+        let mut flat = 0usize;
+        for track in &job.tracks {
+            let files: Vec<_> = (flat..flat + track.sources.len())
+                .map(|index| {
+                    job.child_path(index)
+                        .ok_or_else(|| invalid("media plan is missing a source path"))
+                })
+                .collect::<Result<_>>()?;
+            flat += track.sources.len();
+            tracks.push(crate::media_capture::LocalTrack {
+                files,
+                container: match track.container {
+                    TrackContainer::MpegTs => crate::media_capture::SegmentContainer::MpegTs,
+                    TrackContainer::FragmentedMp4 => {
+                        crate::media_capture::SegmentContainer::FragmentedMp4
+                    }
+                },
+            });
+        }
         let mut input_bytes = 0u64;
-        for path in files.iter().chain(subtitle_path.iter()) {
+        for track in &tracks {
+            for path in &track.files {
+                input_bytes = input_bytes
+                    .checked_add(tokio::fs::metadata(path).await?.len())
+                    .ok_or(Error::Length)?;
+            }
+        }
+        if let Some(path) = &subtitle_path {
             input_bytes = input_bytes
                 .checked_add(tokio::fs::metadata(path).await?.len())
                 .ok_or(Error::Length)?;
@@ -578,10 +732,7 @@ impl Engine {
             })
             .collect();
         let plan = crate::media_capture::MergePlan {
-            tracks: vec![crate::media_capture::LocalTrack {
-                files,
-                container: crate::media_capture::SegmentContainer::MpegTs,
-            }],
+            tracks,
             subtitles,
             output: crate::media_capture::OutputContainer::Matroska,
             max_input_bytes: input_bytes,
@@ -696,9 +847,15 @@ impl Engine {
                 .iter()
                 .find(|d| d.id == *child)
                 .ok_or(Error::NotFound)?;
+            let (source, _) = job
+                .source_at(index)
+                .ok_or_else(|| invalid("media plan is missing a source"))?;
+            let destination = job
+                .child_path(index)
+                .ok_or_else(|| invalid("media plan is missing a source path"))?;
             if download.state != DownloadState::Completed
-                || download.url != job.sources[index]
-                || download.destination != job.directory.join(format!("{index:08}.ts"))
+                || download.url != source
+                || download.destination != destination
             {
                 return Err(invalid("media segment identity changed"));
             }
@@ -792,11 +949,15 @@ fn validate_layout(job: &SavedJob) -> Result<()> {
         .destination
         .parent()
         .ok_or_else(|| invalid("invalid media layout"))?;
+    let total = job.total_sources();
     if !parent.is_absolute()
         || job.directory != parent.join(format!(".osdm-media-{}", job.view.id))
-        || job.sources.is_empty()
-        || job.sources.len() > crate::media_capture::MAX_ENTRIES
-        || job.view.children.len() > job.sources.len()
+        || job.tracks.is_empty()
+        || job.tracks.len() > 2
+        || job.tracks.iter().any(|track| track.sources.is_empty())
+        || total == 0
+        || total > crate::media_capture::MAX_ENTRIES
+        || job.view.children.len() > total
         || job.marker.len() != 36
     {
         return Err(invalid("invalid media ownership record"));
@@ -881,6 +1042,47 @@ async fn hash_file(
         tokio::task::yield_now().await;
     }
     Ok((format!("{:x}", hash.finalize()), length))
+}
+
+async fn validate_segment(
+    path: &Path,
+    container: TrackContainer,
+    token: &CancellationToken,
+    shutdown: &CancellationToken,
+) -> Result<()> {
+    match container {
+        TrackContainer::MpegTs => validate_ts(path, token, shutdown).await,
+        TrackContainer::FragmentedMp4 => validate_fmp4(path, token, shutdown).await,
+    }
+}
+
+/// A conservative ISO-BMFF shape check. Full decode still happens after remux.
+async fn validate_fmp4(
+    path: &Path,
+    token: &CancellationToken,
+    shutdown: &CancellationToken,
+) -> Result<()> {
+    let mut file = tokio::fs::File::open(path).await?;
+    let length = file.metadata().await?.len();
+    if length < 8 {
+        return Err(invalid("invalid fragmented MP4 segment"));
+    }
+    let mut header = [0u8; 8];
+    tokio::select! {
+        _ = token.cancelled() => return Err(Error::Interrupted),
+        _ = shutdown.cancelled() => return Err(Error::Shutdown),
+        result = file.read_exact(&mut header) => { result?; }
+    }
+    let size = u32::from_be_bytes(header[..4].try_into().expect("four bytes"));
+    if size < 8
+        || !matches!(
+            &header[4..8],
+            b"ftyp" | b"styp" | b"sidx" | b"moof" | b"moov" | b"mdat"
+        )
+    {
+        return Err(invalid("invalid or unsupported fragmented MP4 segment"));
+    }
+    Ok(())
 }
 
 async fn validate_ts(
@@ -1009,6 +1211,7 @@ mod tests {
             description: None,
             category_id: None,
             subtitle_url: Some("https://source.invalid/private-subtitle?token=secret".into()),
+            dash_tracks: vec!["video-representation".into()],
         };
         let debug = format!("{request:?}");
         assert!(!debug.contains("source.invalid"));

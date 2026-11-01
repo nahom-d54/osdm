@@ -82,7 +82,14 @@ impl Store {
             .fetch_all(&self.0)
             .await?;
         rows.iter()
-            .map(|row| Ok(serde_json::from_str(row.try_get("payload")?)?))
+            .map(|row| {
+                let mut job: crate::media_jobs::SavedJob =
+                    serde_json::from_str(row.try_get("payload")?)?;
+                // Older payloads stored one flat MPEG-TS source list. The upgrade
+                // preserves every child identity and file name.
+                job.migrate_legacy();
+                Ok(job)
+            })
             .collect()
     }
 
