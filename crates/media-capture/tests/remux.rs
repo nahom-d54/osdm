@@ -46,6 +46,8 @@ async fn real_ffmpeg_remuxes_local_ts_and_attaches_validated_subtitles() {
     for output in [OutputContainer::Mp4, OutputContainer::Matroska] {
         let plan = MergePlan {
             tracks: vec![LocalTrack {
+                selection: Default::default(),
+                offset_milliseconds: 0,
                 files: vec![segment.clone()],
                 container: SegmentContainer::MpegTs,
             }],
@@ -125,6 +127,8 @@ async fn real_fragmented_mp4_separate_tracks_and_webvtt_keep_identity() {
         std::fs::write(&init, &bytes[..split]).unwrap();
         std::fs::write(&fragment, &bytes[split..]).unwrap();
         tracks.push(LocalTrack {
+            selection: Default::default(),
+            offset_milliseconds: 0,
             files: vec![init, fragment],
             container: SegmentContainer::FragmentedMp4,
         });

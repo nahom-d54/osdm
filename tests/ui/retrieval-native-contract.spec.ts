@@ -72,6 +72,15 @@ async function bootstrap(page: Page, offers: Offer[] = [], completed = false) {
             case "engine_enqueue": return "fixture-download";
             case "engine_create_media_job": return "fixture-media-job";
             case "engine_inspect_media":
+              if (args.url === "https://media.example.test/renditions.m3u8") return {
+                kind: "master", segment_count: 0, resource_origins: ["https://cdn.example.test"], choices: [{
+                  url: "https://cdn.example.test/video.m3u8", bandwidth: "1400000", resolution: [1280, 720], codecs: "avc1", track_key: "hls-variant",
+                  hls_audio_group: "audio", hls_renditions: [
+                    { key: "hls-audio", kind: "audio", name: "English", language: "en", in_band: false, default: true, forced: false },
+                    { key: "hls-subtitle", kind: "subtitle", name: "Captions", language: "en", in_band: false, default: false, forced: false },
+                  ],
+                }],
+              };
               if (args.format === "dash") return {
                 kind: "dash", segment_count: 2, resource_origins: ["https://media.example.test"], choices: [
                   { url: args.url, bandwidth: "1400000", resolution: [1280, 720], codecs: "avc1", track_key: "video-1", track_kind: "video", segment_count: 1 },
@@ -266,4 +275,27 @@ test("DASH inspection exposes extensionless subtitle tracks without selecting th
   await dialog.getByRole("button", { name: "Use en subtitle", exact: true }).click();
   await expect(dialog.getByLabel("Optional selected subtitle URL", { exact: true })).toHaveValue("https://media.example.test/captions");
   expect(await commands(page, "engine_create_media_job")).toEqual([]);
+});
+
+test("HLS group tracks require explicit choices and retain master context in the native request", async ({ page }) => {
+  await bootstrap(page, [{ id: "hls-renditions", kind: "hls", url: "https://media.example.test/renditions.m3u8", title: "HLS tracks", subtitle_url: null }]);
+  await page.getByRole("button", { name: "Choose quality & destination", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Save media", exact: true });
+  await dialog.getByLabel("Additional approved origins", { exact: true }).fill("https://cdn.example.test");
+  await dialog.getByRole("button", { name: "Inspect manifest", exact: true }).click();
+  await dialog.getByRole("group", { name: "Choose a quality", exact: true }).getByRole("radio").check();
+  const audio = dialog.getByRole("group", { name: "Choose HLS audio", exact: true });
+  await expect(audio.getByRole("radio", { name: /English/ })).not.toBeChecked();
+  await expect(dialog.getByRole("button", { name: "Save selected media", exact: true })).toBeDisabled();
+  await audio.getByRole("radio", { name: /English/ }).check();
+  await dialog.getByRole("group", { name: "Choose HLS subtitles", exact: true }).getByRole("radio", { name: /Captions/ }).check();
+  await dialog.getByLabel("Installed FFmpeg executable", { exact: true }).fill("C:\\Tools\\ffmpeg.exe");
+  await dialog.getByRole("button", { name: "Save selected media", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.__retrievalIpc.pendingPaths)).toBe(1);
+  await page.evaluate(() => window.__retrievalIpc.resolvePaths(false));
+  await expect.poll(() => commands(page, "engine_create_media_job")).toHaveLength(1);
+  expect((await commands(page, "engine_create_media_job"))[0].args).toMatchObject({ request: {
+    url: "https://media.example.test/renditions.m3u8", hls_variant_key: "hls-variant", hls_audio_key: "hls-audio", hls_subtitle_key: "hls-subtitle", subtitle_url: null,
+  } });
+  expect(await commands(page, "engine_inspect_media")).toHaveLength(1);
 });

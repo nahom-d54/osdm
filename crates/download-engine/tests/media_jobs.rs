@@ -44,6 +44,9 @@ fn request(origin: &str, directory: &Path) -> MediaJobRequest {
         category_id: None,
         dash_tracks: vec![],
         direct_media: false,
+        hls_variant_key: None,
+        hls_audio_key: None,
+        hls_subtitle_key: None,
     }
 }
 
@@ -1003,14 +1006,14 @@ async fn revision_five_upgrade_adds_media_ledger_and_rejects_old_admission_guard
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(version, 9);
+    assert_eq!(version, 10);
     assert!(!(0..=5).contains(&version));
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM media_jobs")
         .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(count, 0);
-    sqlx::query("PRAGMA user_version=10")
+    sqlx::query("PRAGMA user_version=11")
         .execute(&pool)
         .await
         .unwrap();

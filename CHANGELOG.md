@@ -39,6 +39,9 @@ All notable changes to OSDM are documented here. This project follows
   endpoints validated by MIME and content rather than inferred from filenames.
 - Confirmed completed-media input/history cleanup with durable retryable removal
   intent (schema 9), modified/foreign-file refusal and published-output preservation.
+- External HLS VOD MPEG-TS audio and segmented WebVTT renditions with explicit
+  variant/group selection, approved origins, transport-clock alignment, caption
+  boundary deduplication and durable pause/restart (schema 10).
 
 ### Planned
 
@@ -46,7 +49,7 @@ All notable changes to OSDM are documented here. This project follows
 - Storage-aware reservations and duplicate detection.
 - Mirror benchmarking and failover.
 - Predictive scheduling and automatic file organization.
-- Live/DRM capture and external HLS playlist renditions.
+- Live/DRM capture and HLS fMP4/raw-ADTS renditions.
 
 P3's bounded subset is implemented in source and tested; it is not claimed
 complete against every `PLAN.md` §6.4 bullet. See

@@ -4,9 +4,11 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 mod dash;
+mod hls_renditions;
 mod merge;
 mod subtitles;
 pub use dash::*;
+pub use hls_renditions::*;
 pub use merge::*;
 pub use subtitles::*;
 
@@ -105,6 +107,9 @@ pub struct Variant {
     pub average_bandwidth: Option<u64>,
     /// Decimal text avoids rounding declared quality metadata.
     pub frame_rate: Option<String>,
+    pub audio_group: Option<String>,
+    pub subtitle_group: Option<String>,
+    pub renditions: Vec<HlsRendition>,
 }
 
 impl std::fmt::Debug for Variant {
@@ -150,6 +155,7 @@ pub fn inspect_hls(base_url: &str, body: &[u8]) -> Result<Manifest, Error> {
         return Err(Error::Invalid);
     }
     let mut variants = Vec::new();
+    let mut renditions = Vec::new();
     let mut segments = Vec::new();
     let mut pending_variant = None;
     let mut pending_duration = None;
@@ -176,7 +182,23 @@ pub fn inspect_hls(base_url: &str, body: &[u8]) -> Result<Manifest, Error> {
             if ended || pending_variant.is_some() || pending_duration.is_some() {
                 return Err(Error::Invalid);
             }
-            if let Some(value) = line.strip_prefix("#EXT-X-STREAM-INF:") {
+            if let Some(value) = line.strip_prefix("#EXT-X-MEDIA:") {
+                if !segments.is_empty() || target_duration.is_some() || sequence || playlist_type {
+                    return Err(Error::Invalid);
+                }
+                if renditions.len() >= MAX_ENTRIES {
+                    return Err(Error::Limit);
+                }
+                let rendition = parse_rendition(&base, value)?;
+                if renditions.iter().any(|existing: &HlsRendition| {
+                    existing.kind == rendition.kind
+                        && existing.group_id == rendition.group_id
+                        && existing.name == rendition.name
+                }) {
+                    return Err(Error::Invalid);
+                }
+                renditions.push(rendition);
+            } else if let Some(value) = line.strip_prefix("#EXT-X-STREAM-INF:") {
                 if !segments.is_empty() || target_duration.is_some() || sequence || playlist_type {
                     return Err(Error::Invalid);
                 }
@@ -208,7 +230,7 @@ pub fn inspect_hls(base_url: &str, body: &[u8]) -> Result<Manifest, Error> {
                     return Err(Error::Invalid);
                 }
                 version = true;
-                if positive(value)? > 3 {
+                if positive(value)? > 6 {
                     return Err(Error::Unsupported);
                 }
             } else if let Some(value) = line.strip_prefix("#EXT-X-MEDIA-SEQUENCE:") {
@@ -239,19 +261,20 @@ pub fn inspect_hls(base_url: &str, body: &[u8]) -> Result<Manifest, Error> {
         if base.0.scheme() == "https" && source.0.scheme() != "https" {
             return Err(Error::UnsafeUrl);
         }
-        if let Some((bandwidth, resolution, codecs, average_bandwidth, frame_rate)) =
-            pending_variant.take()
-        {
+        if let Some(attributes) = pending_variant.take() {
             if variants.len() == MAX_ENTRIES {
                 return Err(Error::Limit);
             }
             variants.push(Variant {
                 source,
-                bandwidth,
-                resolution,
-                codecs,
-                average_bandwidth,
-                frame_rate,
+                bandwidth: attributes.bandwidth,
+                resolution: attributes.resolution,
+                codecs: attributes.codecs,
+                average_bandwidth: attributes.average_bandwidth,
+                frame_rate: attributes.frame_rate,
+                audio_group: attributes.audio_group,
+                subtitle_group: attributes.subtitle_group,
+                renditions: Vec::new(),
             });
         } else if let Some(duration_seconds) = pending_duration.take() {
             if segments.len() == MAX_ENTRIES {
@@ -269,7 +292,38 @@ pub fn inspect_hls(base_url: &str, body: &[u8]) -> Result<Manifest, Error> {
         return Err(Error::Invalid);
     }
     if !variants.is_empty() {
+        let mut references = 0usize;
+        for variant in &mut variants {
+            for (kind, group) in [
+                (HlsRenditionKind::Audio, &variant.audio_group),
+                (HlsRenditionKind::Subtitle, &variant.subtitle_group),
+            ] {
+                if let Some(group) = group {
+                    let matching: Vec<_> = renditions
+                        .iter()
+                        .filter(|rendition| rendition.kind == kind && &rendition.group_id == group)
+                        .cloned()
+                        .collect();
+                    references = references.checked_add(matching.len()).ok_or(Error::Limit)?;
+                    if references > MAX_ENTRIES {
+                        return Err(Error::Limit);
+                    }
+                    if matching.is_empty()
+                        || matching
+                            .iter()
+                            .filter(|rendition| rendition.default)
+                            .count()
+                            > 1
+                    {
+                        return Err(Error::Invalid);
+                    }
+                    variant.renditions.extend(matching);
+                }
+            }
+        }
         Ok(Manifest::Master { variants })
+    } else if !renditions.is_empty() {
+        Err(Error::Invalid)
     } else if !segments.is_empty() && ended {
         Ok(Manifest::Vod { segments })
     } else if !segments.is_empty() {
@@ -295,13 +349,15 @@ fn positive(value: &str) -> Result<u64, Error> {
     }
 }
 
-type VariantAttributes = (
-    u64,
-    Option<(u32, u32)>,
-    Option<String>,
-    Option<u64>,
-    Option<String>,
-);
+struct VariantAttributes {
+    bandwidth: u64,
+    resolution: Option<(u32, u32)>,
+    codecs: Option<String>,
+    average_bandwidth: Option<u64>,
+    frame_rate: Option<String>,
+    audio_group: Option<String>,
+    subtitle_group: Option<String>,
+}
 
 fn parse_variant(mut text: &str) -> Result<VariantAttributes, Error> {
     let mut bandwidth = None;
@@ -309,6 +365,9 @@ fn parse_variant(mut text: &str) -> Result<VariantAttributes, Error> {
     let mut codecs = None;
     let mut average_bandwidth = None;
     let mut frame_rate = None;
+    let mut audio_group = None;
+    let mut subtitle_group = None;
+    let mut closed_captions = false;
     while !text.is_empty() {
         let (key, rest) = text.split_once('=').ok_or(Error::Invalid)?;
         let quoted = rest.starts_with('"');
@@ -342,6 +401,15 @@ fn parse_variant(mut text: &str) -> Result<VariantAttributes, Error> {
                 }
                 frame_rate = Some(value.to_owned());
             }
+            "AUDIO" if audio_group.is_none() && quoted && !value.is_empty() => {
+                audio_group = Some(value.to_owned())
+            }
+            "SUBTITLES" if subtitle_group.is_none() && quoted && !value.is_empty() => {
+                subtitle_group = Some(value.to_owned())
+            }
+            "CLOSED-CAPTIONS" if !closed_captions && !quoted && value == "NONE" => {
+                closed_captions = true
+            }
             "BANDWIDTH" | "RESOLUTION" | "CODECS" => return Err(Error::Invalid),
             _ => return Err(Error::Unsupported),
         }
@@ -353,13 +421,15 @@ fn parse_variant(mut text: &str) -> Result<VariantAttributes, Error> {
             .filter(|v| !v.is_empty())
             .ok_or(Error::Invalid)?;
     }
-    Ok((
-        bandwidth.ok_or(Error::Invalid)?,
+    Ok(VariantAttributes {
+        bandwidth: bandwidth.ok_or(Error::Invalid)?,
         resolution,
         codecs,
         average_bandwidth,
         frame_rate,
-    ))
+        audio_group,
+        subtitle_group,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

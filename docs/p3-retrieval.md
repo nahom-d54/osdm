@@ -43,7 +43,7 @@ are explicit; source completion is not native/browser release validation.
 - Durable media jobs (`Engine::create_media_job`, `list_media_jobs`,
   `pause/resume/cancel_media_job`):
   - an explicit quality or DASH representation must be selected; a master
-    playlist is never auto-chosen and no DASH track is inferred;
+    variant is never auto-chosen and no DASH track is inferred;
   - child segment downloads use the ordinary engine connection/rate/retry/
     checkpoint path and are persisted before their identity is linked; HLS uses
     MPEG-TS segments, DASH uses an initialization segment plus fragmented-MP4
@@ -67,6 +67,16 @@ are explicit; source completion is not native/browser release validation.
   recorded merge anchor are removed individually. Modified/foreign files are
   refused, the published output is never unlinked, and interrupted cleanup is
   retryable after restart. A tiny workspace ownership marker remains.
+- External HLS VOD renditions: master inspection preserves audio/subtitle group
+  associations, language/name/default/forced labels and stable selection keys.
+  The UI requires an explicit associated audio choice (including deliberate
+  video-only omission); manifest defaults never select a track. Saving retains
+  master context and revalidates variant/group identity before fetching tracks.
+  Playlist and segment origins require approval; no credentials are forwarded.
+  Selected TS video/audio streams are mapped explicitly, preserving their relative
+  33-bit MPEG presentation clocks. Segmented WebVTT timestamp maps are normalized
+  onto the primary video clock and duplicate boundary cues are removed. Audio/video
+  children and selected captions survive pause/restart without losing selection.
 - Browser workflow: an explicit popup scan of the active page, a single chosen
   media item (optional player subtitle), persisted global/exact-site disable, and
   an authenticated native `offer_media` handoff. Nothing downloads automatically,
@@ -118,9 +128,16 @@ are explicit; source completion is not native/browser release validation.
 
 ## Supported subset and explicit limits
 
-- HLS capture is **standalone unencrypted MPEG-TS VOD merged into MP4 or Matroska**.
+- HLS capture is **unencrypted MPEG-TS VOD merged into MP4 or Matroska**, including
+  one explicitly selected external MPEG-TS audio rendition and one segmented
+  WebVTT subtitle rendition from the chosen variant's groups.
   Live/event playlists, encryption/DRM, byte ranges, initialization maps,
-  discontinuities and external audio/subtitle renditions are rejected.
+  discontinuities, raw ADTS/fMP4 audio and in-band closed-caption groups remain
+  unsupported. Declared audio/video durations must agree within one second; track
+  start clocks must agree within 60 seconds and be discoverable in a 1 MiB TS prefix.
+  HLS versions through 6 are accepted only for the supported tags, not all version-6
+  features. Subtitle bodies share a 1 MiB aggregate cap and 4,096-cue ceiling;
+  styles, regions, cue settings and unsupported timeline semantics fail explicitly.
 - DASH capture supports **one static period with explicit `SegmentList`** and
   fragmented-MP4 tracks, with an explicit video and/or audio representation. Live,
   DRM, `SegmentTemplate`/`SegmentTimeline`, multiple periods and text tracks other
@@ -128,7 +145,8 @@ are explicit; source completion is not native/browser release validation.
 - Exposed single-file DASH subtitle tracks and browser/player tracks are
   discoverable but never automatically selected. Extensionless endpoints require
   a supported subtitle MIME type; filename/MIME conflicts fail before remux.
-  External HLS playlist renditions remain unsupported.
+  HLS WebVTT playlists support `X-TIMESTAMP-MAP` (including 33-bit wrap); absent
+  maps use the specified zero-clock mapping, not a guessed per-segment offset.
 - No site adapters or headless browser, no forms/login, no JavaScript-heavy
   capture, no automatic site-wide capture.
 - Automatic mirroring saves matching known-size files as separate revisions; it
@@ -163,7 +181,7 @@ pnpm exec playwright test
 Recorded 2026-11-01 on Windows with the locally installed
 `C:/apps/ffmpeg/bin/{ffmpeg,ffprobe}.exe`:
 
-- `cargo test --workspace`: **220 passed, 3 ignored** (one opt-in multi-gigabyte
+- `cargo test --workspace`: **228 passed, 3 ignored** (one opt-in multi-gigabyte
   transfer and two opt-in remux tests; both remux tests also passed explicitly).
 - Opt-in remux suite (`--test remux -- --ignored`): **2 passed** using real
   FFmpeg/ffprobe — generated MPEG-TS to Matroska with subtitle extraction and
@@ -185,12 +203,25 @@ Recorded 2026-11-01 on Windows with the locally installed
 - `cargo fmt --all -- --check` and `git diff --check`: **pass**.
 - `pnpm typecheck`: **pass**; `pnpm test`: **16 passed**;
   `pnpm test:extension`: **25 passed**; `pnpm build`: **pass** (existing
-  large-chunk advisory only); `pnpm exec playwright test`: **40 passed** including
+  large-chunk advisory only); `pnpm exec playwright test --workers=1 --timeout=60000`:
+  **41 passed** including
   the new media/site focus, mobile-width, fake-IPC and light/dark axe checks.
 - Completed-input cleanup coverage includes unconfirmed removal, modified input
   and foreign-file refusal, restart with pending intent, interrupted partial
   cleanup retry, and published-output preservation. UI tests cover explicit
   cleanup consent, extensionless exposed subtitle selection, and template scope.
+- External-HLS focused evidence: five offline tests cover groups, unsafe references,
+  malformed declarations/maps, clock wrap, deduplicated captions and bounded TS
+  PTS parsing. Three engine integration tests cover explicit/stale group choices,
+  unapproved origins, shutdown while fetching captions, and a real FFmpeg VOD with
+  offset external audio plus segmented WebVTT after pause/restart. ffprobe verifies
+  exactly one selected audio stream, its relative start offset, and zero-origin
+  video; subtitle extraction verifies timing/deduplication, and output SHA-256 is
+  independently checked. Fake-IPC UI coverage verifies explicit choices and master
+  context in the saved request. The expanded Rust workspace and explicit remux
+  suites pass. The first full UI run had two unrelated P1/P2 timeouts during heavy
+  compilation (new rendition coverage passed); the final single-worker rerun
+  completed with **41 passed** and no failures.
 - Nine Site Grabber automation integration tests cover durable/coalesced UTC
   decisions, startup behavior, command-only ownership, explicit automatic
   admission, concurrency ceilings, filter continuation, separate revisions,

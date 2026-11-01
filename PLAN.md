@@ -562,9 +562,11 @@ MPEG-TS HLS and static fragmented-MP4 DASH jobs with MP4/Matroska output,
 exact-output hashing and no-overwrite publication, optional validated SRT/WebVTT,
 direct MP4 subtitle remux and per-site disable are tested with installed FFmpeg.
 Still open:
-external HLS renditions/live/DRM support and manual production-stream playback
+live/DRM support and manual production-stream playback
 review. Exposed single-file DASH/player subtitles, extensionless subtitle endpoints
-and confirmed completed-job cleanup are implemented. See
+and confirmed completed-job cleanup are implemented.
+External HLS MPEG-TS VOD audio and segmented WebVTT renditions now support explicit
+variant/group selection, approved origins, shared-clock alignment and pause/restart. See
 [P3 scope and limits](docs/p3-retrieval.md).
 
 #### 6.4.2 Site Grabber

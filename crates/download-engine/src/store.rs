@@ -21,7 +21,7 @@ impl Store {
         let version: i64 = sqlx::query_scalar("PRAGMA user_version")
             .fetch_one(&pool)
             .await?;
-        if !(0..=9).contains(&version) {
+        if !(0..=10).contains(&version) {
             return Err(crate::Error::Invalid(
                 "database was created by a newer engine version".into(),
             ));
@@ -62,7 +62,8 @@ impl Store {
             ));
         }
         // Revision 8 must not resume a job with durable removal intent.
-        sqlx::query("PRAGMA user_version = 9")
+        // Revision 9 must not ignore HLS stream selection or segmented captions.
+        sqlx::query("PRAGMA user_version = 10")
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;

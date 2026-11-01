@@ -23,7 +23,9 @@ pub use automation::*;
 pub use dash_inspection::{dash_track_key, select_dash_tracks};
 pub use engine::Engine;
 pub use media::SitePageResponse;
-pub use media_jobs::{MediaJob, MediaJobId, MediaJobRequest, MediaJobState};
+pub use media_jobs::{
+    MediaJob, MediaJobId, MediaJobRequest, MediaJobState, hls_rendition_key, hls_variant_key,
+};
 pub use model::*;
 pub use osdm_media_capture as media_capture;
 pub use site_grabber::Filters as SiteFilters;

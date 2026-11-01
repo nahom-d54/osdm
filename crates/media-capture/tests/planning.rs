@@ -204,6 +204,8 @@ fn subtitle_formats_timing_identity_and_bounds() {
 fn plan(path: PathBuf) -> MergePlan {
     MergePlan {
         tracks: vec![LocalTrack {
+            selection: Default::default(),
+            offset_milliseconds: 0,
             files: vec![path],
             container: SegmentContainer::MpegTs,
         }],

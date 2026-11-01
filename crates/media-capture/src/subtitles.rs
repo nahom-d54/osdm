@@ -14,7 +14,7 @@ pub struct SubtitleInfo {
     pub end_milliseconds: u64,
 }
 
-fn timestamp(value: &str, format: SubtitleFormat) -> Result<u64, Error> {
+pub(crate) fn timestamp(value: &str, format: SubtitleFormat) -> Result<u64, Error> {
     let separator = if format == SubtitleFormat::Srt {
         ','
     } else {

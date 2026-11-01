@@ -1654,21 +1654,33 @@ async fn schema_initializes_and_rejects_newer_or_corrupt_databases() {
     let engine = Engine::open(&fresh, config()).await.unwrap();
     engine.shutdown().await.unwrap();
     drop(engine);
-    assert_eq!(database_version(&fresh).await, 9);
+    assert_eq!(database_version(&fresh).await, 10);
 
     let unversioned = dir.path().join("unversioned.db");
     create_database(&unversioned, 0, None).await;
     let engine = Engine::open(&unversioned, config()).await.unwrap();
     engine.shutdown().await.unwrap();
     drop(engine);
-    assert_eq!(database_version(&unversioned).await, 9);
+    assert_eq!(database_version(&unversioned).await, 10);
 
     let revision_two = dir.path().join("revision-two.db");
     create_database(&revision_two, 2, None).await;
     let engine = Engine::open(&revision_two, config()).await.unwrap();
     engine.shutdown().await.unwrap();
     drop(engine);
-    assert_eq!(database_version(&revision_two).await, 9);
+    assert_eq!(database_version(&revision_two).await, 10);
+
+    let revision_nine = dir.path().join("revision-nine.db");
+    create_database(&revision_nine, 9, None).await;
+    let engine = Engine::open(&revision_nine, config()).await.unwrap();
+    engine.shutdown().await.unwrap();
+    drop(engine);
+    let version = database_version(&revision_nine).await;
+    assert_eq!(version, 10);
+    assert!(
+        !(0..=9).contains(&version),
+        "revision-9 binaries must reject HLS selection records"
+    );
 
     let revision_eight = dir.path().join("revision-eight.db");
     create_database(&revision_eight, 8, None).await;
@@ -1676,7 +1688,7 @@ async fn schema_initializes_and_rejects_newer_or_corrupt_databases() {
     engine.shutdown().await.unwrap();
     drop(engine);
     let version = database_version(&revision_eight).await;
-    assert_eq!(version, 9);
+    assert_eq!(version, 10);
     assert!(
         !(0..=8).contains(&version),
         "revision-8 binaries must reject cleanup intent databases"
@@ -1714,10 +1726,10 @@ async fn schema_initializes_and_rejects_newer_or_corrupt_databases() {
     );
     engine.shutdown().await.unwrap();
     drop(engine);
-    assert_eq!(database_version(&legacy).await, 9);
+    assert_eq!(database_version(&legacy).await, 10);
 
     let newer = dir.path().join("newer.db");
-    create_database(&newer, 10, None).await;
+    create_database(&newer, 11, None).await;
     let error = match Engine::open(&newer, config()).await {
         Ok(_) => panic!("newer schema was accepted"),
         Err(error) => error,

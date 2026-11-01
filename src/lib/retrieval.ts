@@ -17,6 +17,8 @@ export interface MediaChoice {
   track_kind?: "video" | "audio" | "subtitle" | null;
   language?: string | null;
   segment_count?: number;
+  hls_audio_group?: string | null;
+  hls_renditions?: Array<{ key: string; kind: "audio" | "subtitle"; name: string; language: string | null; in_band: boolean; default: boolean; forced: boolean }>;
 }
 
 export interface MediaInspection {
@@ -36,6 +38,9 @@ export interface MediaJobRequest {
   category_id?: string | null;
   dash_tracks?: string[];
   direct_media?: boolean;
+  hls_variant_key?: string | null;
+  hls_audio_key?: string | null;
+  hls_subtitle_key?: string | null;
 }
 
 export interface MediaJob {

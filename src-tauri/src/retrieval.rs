@@ -27,6 +27,19 @@ pub(crate) struct MediaChoice {
     track_kind: Option<&'static str>,
     language: Option<String>,
     segment_count: usize,
+    hls_audio_group: Option<String>,
+    hls_renditions: Vec<HlsRenditionChoice>,
+}
+
+#[derive(Serialize)]
+struct HlsRenditionChoice {
+    key: String,
+    kind: &'static str,
+    name: String,
+    language: Option<String>,
+    in_band: bool,
+    default: bool,
+    forced: bool,
 }
 
 #[derive(Serialize)]
@@ -81,21 +94,65 @@ pub(crate) async fn engine_inspect_media(
     let result = engine.inspect_hls(&url, &allowed_origins, &token).await;
     shell.media_inspections.lock().await.remove(&request_id);
     match result.map_err(|error| error.to_string())? {
-        Manifest::Master { variants } => Ok(MediaInspection {
-            kind: "master",
-            choices: variants
-                .into_iter()
-                .map(|variant| MediaChoice {
-                    url: variant.source.as_str().into(),
-                    bandwidth: variant.bandwidth.to_string(),
-                    resolution: variant.resolution,
-                    codecs: variant.codecs,
-                    ..MediaChoice::default()
+        Manifest::Master { variants } => {
+            let origins: std::collections::BTreeSet<_> = variants
+                .iter()
+                .flat_map(|variant| {
+                    std::iter::once(&variant.source).chain(
+                        variant
+                            .renditions
+                            .iter()
+                            .filter_map(|rendition| rendition.source.as_ref()),
+                    )
                 })
-                .collect(),
-            segment_count: 0,
-            resource_origins: Vec::new(),
-        }),
+                .filter_map(|source| {
+                    reqwest::Url::parse(source.as_str())
+                        .ok()
+                        .map(|url| url.origin().ascii_serialization())
+                })
+                .collect();
+            Ok(MediaInspection {
+                kind: "master",
+                choices: variants
+                    .into_iter()
+                    .map(|variant| {
+                        let key = download_engine::hls_variant_key(&variant);
+                        let renditions = variant
+                            .renditions
+                            .iter()
+                            .map(|rendition| HlsRenditionChoice {
+                                key: download_engine::hls_rendition_key(rendition),
+                                kind: match rendition.kind {
+                                    download_engine::media_capture::HlsRenditionKind::Audio => {
+                                        "audio"
+                                    }
+                                    download_engine::media_capture::HlsRenditionKind::Subtitle => {
+                                        "subtitle"
+                                    }
+                                },
+                                name: rendition.name.clone(),
+                                language: rendition.language.clone(),
+                                in_band: rendition.source.is_none(),
+                                default: rendition.default,
+                                forced: rendition.forced,
+                            })
+                            .collect();
+                        MediaChoice {
+                            url: variant.source.as_str().into(),
+                            bandwidth: variant.bandwidth.to_string(),
+                            resolution: variant.resolution,
+                            codecs: variant.codecs,
+                            track_key: Some(key),
+                            hls_audio_group: variant.audio_group,
+                            hls_renditions: renditions,
+                            ..MediaChoice::default()
+                        }
+                    })
+                    .collect(),
+                segment_count: 0,
+                resource_origins: origins.into_iter().collect(),
+            })
+        }
         Manifest::Vod { segments } => {
             let mut origins = std::collections::BTreeSet::new();
             for segment in &segments {
@@ -156,6 +213,7 @@ fn dash_view(plan: download_engine::media_capture::DashPlan) -> Reply<MediaInspe
             track_kind: Some(kind),
             language: track.language,
             segment_count: track.segments.len(),
+            ..MediaChoice::default()
         });
     }
     Ok(MediaInspection {

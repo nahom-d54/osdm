@@ -14,6 +14,8 @@ use std::{
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
+mod hls;
+pub use hls::{hls_rendition_key, hls_variant_key};
 
 pub type MediaJobId = uuid::Uuid;
 
@@ -34,6 +36,13 @@ pub struct MediaJobRequest {
     /// Explicit local-container remux of one direct MP4/MOV file (for subtitles).
     #[serde(default)]
     pub direct_media: bool,
+    #[serde(default)]
+    pub hls_variant_key: Option<String>,
+    /// An explicit rendition key, or "none" to deliberately omit group audio.
+    #[serde(default)]
+    pub hls_audio_key: Option<String>,
+    #[serde(default)]
+    pub hls_subtitle_key: Option<String>,
 }
 
 impl std::fmt::Debug for MediaJobRequest {
@@ -87,6 +96,8 @@ pub(crate) enum TrackContainer {
 pub(crate) struct SavedTrack {
     sources: Vec<String>,
     container: TrackContainer,
+    #[serde(default)]
+    selection: crate::media_capture::TrackSelection,
 }
 
 // Deliberately no Debug: source URLs (including query credentials) are secrets.
@@ -112,6 +123,8 @@ pub(crate) struct SavedJob {
 struct SavedSubtitle {
     format: crate::media_capture::SubtitleFormat,
     body: Vec<u8>,
+    #[serde(default)]
+    hls_segments: Vec<Vec<u8>>,
 }
 
 impl SavedJob {
@@ -126,6 +139,7 @@ impl SavedJob {
             self.tracks.push(SavedTrack {
                 sources: std::mem::take(&mut self.sources),
                 container: TrackContainer::MpegTs,
+                selection: Default::default(),
             });
         }
     }
@@ -242,7 +256,32 @@ impl Engine {
             origins.insert(allowed.clone());
         }
         let cancellation = CancellationToken::new();
-        let tracks = if request.direct_media {
+        if (request.direct_media || !request.dash_tracks.is_empty())
+            && (request.hls_variant_key.is_some()
+                || request.hls_audio_key.is_some()
+                || request.hls_subtitle_key.is_some())
+        {
+            return Err(invalid(
+                "HLS rendition selection cannot be mixed with direct media or DASH",
+            ));
+        }
+        if request.hls_variant_key.is_none()
+            && (request.hls_audio_key.is_some() || request.hls_subtitle_key.is_some())
+        {
+            return Err(invalid("HLS renditions require an explicit master variant"));
+        }
+        if request.hls_subtitle_key.is_some() && request.subtitle_url.is_some() {
+            return Err(invalid(
+                "select either an HLS subtitle rendition or a direct subtitle URL",
+            ));
+        }
+        let mut rendition_subtitle = None;
+        let tracks = if request.hls_variant_key.is_some() {
+            let (tracks, subtitle) =
+                hls::plan(self, &request, &origins, secure_source, &cancellation).await?;
+            rendition_subtitle = subtitle;
+            tracks
+        } else if request.direct_media {
             if !request.dash_tracks.is_empty() {
                 return Err(invalid("direct media cannot select DASH representations"));
             }
@@ -261,6 +300,7 @@ impl Engine {
             vec![SavedTrack {
                 sources: vec![source.as_str().to_owned()],
                 container: TrackContainer::FragmentedMp4,
+                selection: Default::default(),
             }]
         } else if request.dash_tracks.is_empty() {
             let segments = match self
@@ -288,6 +328,7 @@ impl Engine {
                     .map(|segment| segment.source.as_str().to_owned())
                     .collect(),
                 container: TrackContainer::MpegTs,
+                selection: Default::default(),
             }]
         } else {
             // An explicit video/audio representation choice is mandatory; never
@@ -325,6 +366,7 @@ impl Engine {
                 tracks.push(SavedTrack {
                     sources,
                     container: TrackContainer::FragmentedMp4,
+                    selection: Default::default(),
                 });
             }
             tracks
@@ -393,9 +435,10 @@ impl Engine {
             Some(SavedSubtitle {
                 format,
                 body: response.body,
+                hls_segments: Vec::new(),
             })
         } else {
-            None
+            rendition_subtitle
         };
         let parent = tokio::fs::canonicalize(request.destination.parent().unwrap()).await?;
         let destination = parent.join(request.destination.file_name().unwrap());
@@ -522,7 +565,7 @@ impl Engine {
             biased;
             _ = self.inner.media.shutdown.cancelled() => return Err(Error::Shutdown),
             _ = self.inner.site.shutdown.cancelled() => return Err(Error::Shutdown),
-            guard = self.inner.media.operations.write() => guard,
+            guard = self.inner.media.operations.read() => guard,
         };
         let mut data = self.inner.data.lock().await;
         if data.stopped || self.inner.media.shutdown.is_cancelled() {
@@ -915,6 +958,44 @@ impl Engine {
         check_cancel(self, token)?;
         owned_directory(&job).await?;
         self.verify_media_inputs(&job, token).await?;
+        let primary_pts = if job
+            .tracks
+            .iter()
+            .any(|track| track.selection != crate::media_capture::TrackSelection::All)
+            || job
+                .subtitle
+                .as_ref()
+                .is_some_and(|subtitle| !subtitle.hls_segments.is_empty())
+        {
+            Some(
+                hls::start_pts(
+                    &job.child_path(0)
+                        .ok_or_else(|| invalid("missing HLS primary track"))?,
+                    false,
+                    token,
+                    &self.inner.media.shutdown,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+        if let Some(subtitle) = &mut job.subtitle
+            && !subtitle.hls_segments.is_empty()
+        {
+            subtitle.body = crate::media_capture::merge_hls_webvtt(
+                &subtitle.hls_segments,
+                primary_pts.ok_or_else(|| invalid("missing HLS presentation clock"))?,
+            )?;
+            let mut data = self.inner.data.lock().await;
+            let saved = data
+                .media_jobs
+                .iter_mut()
+                .find(|saved| saved.view.id == id)
+                .ok_or(Error::NotFound)?;
+            saved.subtitle = job.subtitle.clone();
+            self.inner.store.save_media_job(saved).await?;
+        }
         // Remux and full-decode stages have a separate small resource budget.
         // Waiting never bypasses pause/cancel/shutdown or occupies a connection.
         let _processing = self.acquire_media_processor(token).await?;
@@ -971,6 +1052,31 @@ impl Engine {
             flat += track.sources.len();
             tracks.push(crate::media_capture::LocalTrack {
                 files,
+                selection: track.selection,
+                offset_milliseconds: if track.selection
+                    == crate::media_capture::TrackSelection::Audio
+                {
+                    let clock = hls::start_pts(
+                        &job.child_path(flat - track.sources.len())
+                            .ok_or_else(|| invalid("missing HLS audio track"))?,
+                        true,
+                        token,
+                        &self.inner.media.shutdown,
+                    )
+                    .await?;
+                    let offset = crate::media_capture::mpegts_clock_delta(
+                        clock,
+                        primary_pts.ok_or_else(|| invalid("missing primary HLS clock"))?,
+                    )? / 90;
+                    if offset.unsigned_abs() > 60_000 {
+                        return Err(invalid(
+                            "HLS rendition clocks differ by more than 60 seconds",
+                        ));
+                    }
+                    offset
+                } else {
+                    0
+                },
                 container: match track.container {
                     TrackContainer::MpegTs => crate::media_capture::SegmentContainer::MpegTs,
                     TrackContainer::FragmentedMp4 => {
@@ -1504,6 +1610,9 @@ mod tests {
             subtitle_url: Some("https://source.invalid/private-subtitle?token=secret".into()),
             dash_tracks: vec!["video-representation".into()],
             direct_media: false,
+            hls_variant_key: None,
+            hls_audio_key: None,
+            hls_subtitle_key: None,
         };
         let debug = format!("{request:?}");
         assert!(!debug.contains("source.invalid"));
@@ -1562,6 +1671,7 @@ mod tests {
             tracks: vec![SavedTrack {
                 sources: vec!["https://media.example.test/fixture.ts".into()],
                 container: TrackContainer::MpegTs,
+                selection: Default::default(),
             }],
             sources: vec![],
             ffmpeg: parent.join("unused-ffmpeg.exe"),

@@ -15,6 +15,14 @@ pub enum SegmentContainer {
     FragmentedMp4,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum TrackSelection {
+    #[default]
+    All,
+    Video,
+    Audio,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputContainer {
     Mp4,
@@ -27,6 +35,9 @@ pub struct LocalTrack {
     /// Initialization first for fragmented MP4, then ordered media fragments.
     pub files: Vec<PathBuf>,
     pub container: SegmentContainer,
+    pub selection: TrackSelection,
+    /// Relative to the primary track after demuxer start-time normalization.
+    pub offset_milliseconds: i64,
 }
 
 pub struct LocalSubtitle {
@@ -303,6 +314,14 @@ async fn prepare(
         if track.container == SegmentContainer::FragmentedMp4 {
             command.args(["-enable_drefs", "0", "-use_absolute_path", "0"]);
         }
+        if track.offset_milliseconds.unsigned_abs() > 60_000 {
+            return Err(MergeError::Invalid);
+        }
+        if track.offset_milliseconds != 0 {
+            command
+                .arg("-itsoffset")
+                .arg(format!("{:.3}", track.offset_milliseconds as f64 / 1000.0));
+        }
         command.arg("-i").arg(path);
     }
     for (index, subtitle) in plan.subtitles.iter().enumerate() {
@@ -332,8 +351,16 @@ async fn prepare(
         ]);
         command.arg("-i").arg(path);
     }
-    for index in 0..plan.tracks.len() + plan.subtitles.len() {
-        command.arg("-map").arg(index.to_string());
+    for (index, track) in plan.tracks.iter().enumerate() {
+        let map = match track.selection {
+            TrackSelection::All => index.to_string(),
+            TrackSelection::Video => format!("{index}:v:0"),
+            TrackSelection::Audio => format!("{index}:a:0"),
+        };
+        command.arg("-map").arg(map);
+    }
+    for index in plan.tracks.len()..plan.tracks.len() + plan.subtitles.len() {
+        command.arg("-map").arg(format!("{index}:s:0"));
     }
     command.args(["-map_metadata", "-1", "-map_chapters", "-1", "-c", "copy"]);
     if !plan.subtitles.is_empty() {

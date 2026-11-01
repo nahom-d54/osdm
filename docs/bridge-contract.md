@@ -64,7 +64,7 @@ camelCase; nested Rust structs retain snake_case. Errors reject with a string.
 | `engine_probe` | `url: string` | `ProbeInfo` |
 | `engine_inspect_media` | `url: string, allowedOrigins: string[], requestId: UUID, format?: "hls" \| "dash"` | `{kind, choices, segment_count, resource_origins}` |
 | `engine_cancel_inspection` | `requestId: UUID` | `()` |
-| `engine_create_media_job` | `request: {url, destination, allowed_origins, ffmpeg_path, description, subtitle_url?, category_id?, dash_tracks?, direct_media?}` | media job UUID |
+| `engine_create_media_job` | `request: {url, destination, allowed_origins, ffmpeg_path, description, subtitle_url?, category_id?, dash_tracks?, direct_media?, hls_variant_key?, hls_audio_key?, hls_subtitle_key?}` | media job UUID |
 | `engine_media_jobs` | — | engine media job snapshots |
 | `engine_remove_completed_media_job` | `id: UUID, confirmed: boolean` | `()` |
 | `engine_control_media_job` | `id: UUID, action: "pause" \| "resume" \| "cancel"` | `()` |
@@ -149,7 +149,9 @@ asynchronous listener registration finishes.
 **Save media** accepts an explicit HLS source or a direct media file. HLS master
 choices show manifest-declared resolution/bandwidth/codecs, never measured quality
 or an automatically selected variant. A selected variant must be inspected again
-before saving. Additional redirect/resource origins require explicit approval;
+before saving for standalone capture. Masters with associated renditions retain
+master context and explicit variant/group choices through admission instead.
+Additional redirect/resource origins require explicit approval;
 neither manifests nor browser offers authorize credential forwarding.
 Choice `bandwidth` is decimal integer text (bits/second), preserving the exact
 manifest u64 value beyond JavaScript's safe-integer range. `resolution` is a
@@ -158,7 +160,8 @@ two-number tuple or null; codecs are optional manifest-declared text.
 `format` selects HLS or conservative static-DASH inspection. DASH choices carry
 `track_key`, `track_kind` (`video`/`audio`/`subtitle`), `language` and
 `segment_count`; the manifest itself is never offered as a direct file. Sending a
-master playlist to `engine_create_media_job` is rejected, as is any segment,
+master playlist without an explicit `hls_variant_key` to `engine_create_media_job`
+is rejected, as is any segment,
 subtitle or redirect origin that was not explicitly approved.
 
 Media jobs support standalone unencrypted MPEG-TS HLS VOD and static fragmented-
@@ -166,7 +169,7 @@ MP4 DASH `SegmentList` tracks merged into MP4 or Matroska, with optional validat
 SRT/WebVTT embedding. DASH requires at least one explicitly selected
 `dash_tracks` key (video and/or audio); its initialization segment is kept first.
 Live, event, encrypted/DRM, byte-range, HLS initialization-map, DASH
-template/timeline, multi-period and external-rendition sources are rejected rather
+template/timeline and multi-period sources are rejected rather
 than silently altered. Job `sha256` is locally computed, not publisher-
 authenticated integrity.
 
@@ -449,6 +452,25 @@ validates ownership markers, planned child identities and content hashes, refuse
 foreign/modified files, and removes individual inputs/history/recorded merge anchor
 without unlinking published output. A tiny workspace marker is retained. No broad
 directory deletion or stale-artifact globbing occurs.
+
+Schema **10** guards persisted HLS stream-role selection and segmented WebVTT.
+Revisions 0–9 migrate transactionally; legacy tracks default to the existing
+all-stream mapping, and legacy single-file subtitles default to no HLS segments.
+Revision-9 binaries must reject the new version rather than ignore these rules.
+
+For an HLS master, choices add stable `track_key`, `hls_audio_group` and
+`hls_renditions: {key, kind: "audio"|"subtitle", name, language, in_band, default,
+forced}[]`. Manifest flags are labels, never implicit choices or authorization.
+Set `url` to the master and supply its selected `hls_variant_key`; a variant with
+an audio group requires `hls_audio_key` (a matching key, or the explicit sentinel
+`"none"` for video-only). `hls_subtitle_key` is optional and mutually exclusive
+with `subtitle_url`. HLS choices cannot be mixed with DASH or direct-media mode.
+The engine re-fetches the master and validates current keys/group membership,
+selected playlist origins and every segment origin before fetching that resource.
+Only complete unencrypted MPEG-TS VOD and segmented plain WebVTT are supported;
+selected stream mapping and relative MPEG clock offsets survive restart. Caption
+timestamp maps normalize onto the primary video clock; boundary cues deduplicate.
+See `docs/p3-retrieval.md` for exact format, clock and budget limits.
 
 ### Site Grabber workflow
 

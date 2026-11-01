@@ -10,6 +10,10 @@ basic HLS master playlists and ordered segments in complete, unencrypted VOD
 playlists. Bandwidth is declared metadata, not measured throughput. Average
 bandwidth and frame rate are preserved when declared. Choosing a variant must
 remain explicit. `inspect_hls_vod` adds manifest and media-sequence identity.
+Masters preserve associated `EXT-X-MEDIA` audio/subtitle declarations on each
+variant (group/name/language, URI, default/autoselect/forced flags). In-band audio
+is distinguished by an absent URI; subtitles require an external URI. Invalid,
+duplicate or missing groups fail. Flags never authorize implicit selection.
 
 Limits: 1 MiB manifest, 8 KiB lines/URL, 4096 entries, UTF-8, HTTP(S) only, no
 embedded credentials/fragments or HTTPS-to-HTTP references. Relative URLs resolve
@@ -20,8 +24,9 @@ URLs**. `MediaUrl` deserialization revalidates URL safety, but deserialized plan
 are not authorization or proof their non-URL semantics passed inspection.
 
 Unknown EXT tags/variant attributes, live/event, encryption/DRM, byte ranges,
-initialization maps, discontinuities, external audio/subtitle renditions, and
-newer protocol versions fail closed. No codecs are bundled. Parsing performs no
+initialization maps, discontinuities, closed-caption groups, and protocol versions
+above 6 fail closed. Version acceptance does not enable unsupported tags/features.
+No codecs are bundled. Parsing performs no
 network requests or filesystem writes and does not depend on the engine.
 
 ## DASH and subtitles
@@ -46,6 +51,14 @@ SRT indices must start at one and be consecutive. VTT identifiers are accepted;
 settings, styles, regions, notes and metadata headers are not supported. Input
 bytes remain unchanged. Validation is not HTML sanitization or rendering.
 
+`validate_hls_webvtt_segment` accepts bounded plain WebVTT segments with optional
+`X-TIMESTAMP-MAP`. `merge_hls_webvtt` normalizes cue timestamps relative to the
+primary MPEG-TS presentation clock (33-bit wrapping arithmetic), removes identical
+boundary cues and validates the resulting standalone document. Missing maps use
+zero LOCAL/MPEGTS as specified, not an inferred per-segment shift. Aggregate input
+and output are capped at 1 MiB/4096 cues. Styles, regions and cue settings remain
+unsupported. `mpegts_start_pts` reads only a bounded TS prefix; callers own fetching.
+
 ## Local remux (explicit opt-in)
 
 `remux_local(explicit_absolute_ffmpeg_path, &MergePlan, &CancellationToken)`
@@ -55,6 +68,9 @@ initialization-first fragmented MP4 objects form each track. Separate tracks and
 validated SRT/VTT subtitles are explicitly mapped into MP4 or Matroska; subtitles
 are converted to mov_text or SRT, with optional language labels. Audio/video are
 stream-copied, not transcoded; incompatible codec/container combinations fail.
+Track selection can map all streams (legacy), video only or audio only, with a
+bounded explicit relative offset. This avoids leaking muxed audio when a separate
+HLS audio rendition was selected.
 
 No PATH discovery, shell, source URL, concat script or external codec download is
 used. ffmpeg is an explicitly trusted user-configured executable, not bundled.

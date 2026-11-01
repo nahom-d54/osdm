@@ -44,7 +44,6 @@ fn unsupported_semantics_are_not_silently_ignored() {
         "#EXT-X-BYTERANGE:100@0",
         "#EXT-X-MAP:URI=\"init.mp4\"",
         "#EXT-X-DISCONTINUITY",
-        "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\"",
         "#EXT-X-VERSION:7",
         "#EXT-X-UNKNOWN:1",
     ] {
@@ -63,7 +62,7 @@ fn unsupported_semantics_are_not_silently_ignored() {
             BASE,
             b"#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1,AUDIO=\"a\"\na.m3u8\n"
         ),
-        Err(Error::Unsupported)
+        Err(Error::Invalid)
     );
 }
 
