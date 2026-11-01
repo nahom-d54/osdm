@@ -1,12 +1,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { eligible, normalizedLinks } from "./rules.js";
+import { captureDefaults } from "./defaults.js";
+import { mediaDefaults } from "./media.js";
+
+test("capture, URL-scoped cookies, floating controls and network discovery default on", () => {
+  assert.equal(captureDefaults.enabled, true);
+  assert.equal(captureDefaults.cookiesEnabled, true);
+  assert.equal(mediaDefaults.mediaEnabled, true);
+  assert.equal(mediaDefaults.floatingVideos, true);
+  assert.equal(mediaDefaults.networkMediaEnabled, true);
+});
 const rules = {
   enabled: true,
   exclusions: "private.example",
   extensions: "zip tar.gz",
 };
-test("interception is opt-in, respects exclusions, modifiers and file types", () => {
+test("interception respects opt-out, exclusions, modifiers and file types", () => {
   assert.equal(
     eligible(
       "https://files.example/a.ZIP",

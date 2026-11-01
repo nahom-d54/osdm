@@ -5,7 +5,7 @@ import { createHash, createPublicKey } from "node:crypto";
 import webExt from "web-ext";
 import { stagePopup } from "./popup-build.mjs";
 
-export const packageFiles = ["background.js", "cookies.js", "defaults.js", "rules.js", "modifiers.js", "options.html", "media.js", "media-background.js", "network-media.js", "video-button.js", "icon.svg", "icon-16.png", "icon-32.png", "icon-48.png", "icon-128.png"];
+export const packageFiles = ["background.js", "cookies.js", "defaults.js", "request-headers.js", "rules.js", "modifiers.js", "options.html", "media.js", "media-background.js", "network-media.js", "video-button.js", "icon.svg", "icon-16.png", "icon-32.png", "icon-48.png", "icon-128.png"];
 const source = fileURLToPath(new URL("./", import.meta.url));
 export const bundledIdentity = JSON.parse(await fs.readFile(new URL("./identity.json", import.meta.url), "utf8"));
 

@@ -153,3 +153,17 @@ test("settings pages switch with arrow keys and expose only the selected panel",
   await page.getByRole("tab", { name: "Browser", exact: true }).click();
   await expect(page.getByRole("button", { name: "Set up browser extension", exact: true })).toBeVisible();
 });
+
+test("default browser identity is editable and resettable from Transfers", async ({ page }) => {
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("tab", { name: "Transfers", exact: true }).click();
+  const panel = page.getByRole("tabpanel", { name: "Transfers", exact: true });
+  const field = panel.getByLabel("User agent", { exact: true });
+  await expect(field).toHaveValue(/Chrome\/156\.0\.0\.0/);
+  await field.fill("Mozilla/5.0 CustomIdentity");
+  await panel.getByRole("button", { name: "Save user agent", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("osdm.settings")!).state.settings.user_agent)).toBe("Mozilla/5.0 CustomIdentity");
+  await panel.getByRole("button", { name: "Use default browser user agent", exact: true }).click();
+  await expect(field).toHaveValue(/Chrome\/156\.0\.0\.0/);
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("osdm.settings")!).state.settings.user_agent)).toContain("Chrome/156.0.0.0");
+});

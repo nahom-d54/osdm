@@ -14,6 +14,41 @@ All notable changes to OSDM are documented here. This project follows
 - Predictive scheduling and automatic file organization.
 - Live/DRM capture and HLS fMP4/raw-ADTS renditions.
 
+## [0.1.4-alpha.3] - 2026-11-01
+
+Default-on browser capture with explicit confirmation, a more robust draggable
+video panel, captured browser identity reuse, and editable default downloads
+identity. Store publication remains deferred; reload the updated extension
+(version 0.1.2) after updating the desktop app.
+
+### Changed
+
+- Draggable, closable floating video panel with a source dropdown and subtitle
+  choice, viewport clamping, keyboard movement and per-player dismissal.
+- Captured downloads replay the browser's user agent and bounded non-secret
+  identity headers (`Accept`, language, client hints) for the original origin,
+  in addition to approved cookies. Context headers such as `Referer`/`Origin`,
+  request bodies, response headers, range/conditional and transport headers are
+  never replayed. Cookies/authorization are stripped across redirect origins.
+- Editable default user agent for ordinary downloads, defaulting to Chrome 156
+  on Windows and applied to media inspection too. Settings validates a
+  single-line header value and offers reset to the browser default.
+- Hardened video discovery with frame/document-scoped network offers, iframe
+  navigation invalidation, synchronous MV3 request listeners, per-source expiry,
+  cached-manifest detection, additional direct containers and declared metadata/
+  preload sources. Floating controls reject stale player selections, prefer the
+  active/hovered player, and offer explicitly selected subtitles. This does not
+  add new HLS/DASH capture formats or authenticated-media support.
+- Browser interception, local desktop integration, floating video controls and
+  network media discovery now default on, preserving explicit saved opt-outs.
+  Cookies and all-site access are requested at extension installation/update;
+  browser permission approval cannot be bypassed.
+- Browser file handoffs are accepted as durable paused downloads and open a
+  desktop confirmation dialog. Start, save for later or discard explicitly;
+  closing or restarting never starts an unconfirmed capture.
+- Wider 460px extension popup; automatic all-frame video-button injection,
+  already-open-tab setup, open-shadow-root discovery and layout/playback refresh.
+
 ## [0.1.4-alpha.2] - 2026-11-01
 
 Browser capture and setup fixes. Store publication remains deferred: extension

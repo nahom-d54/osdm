@@ -1,4 +1,4 @@
-export const mediaDefaults = { mediaEnabled: true, mediaDisabledSites: [], networkMediaEnabled: false, floatingVideos: false };
+export const mediaDefaults = { mediaEnabled: true, mediaDisabledSites: [], networkMediaEnabled: true, floatingVideos: true };
 export const mediaLimits = { entries: 256, offers: 32, url: 8192 };
 
 export function mediaUrl(value, base) {
@@ -37,9 +37,10 @@ export function mediaTitle(title) {
 
 function kind(url, type = "") {
   const path = new URL(url).pathname.toLowerCase();
+  type = type.trim().split(";", 1)[0];
   if (/\.m3u8$/.test(path) || /mpegurl/i.test(type)) return "HLS";
   if (/\.mpd$/.test(path) || /dash\+xml/i.test(type)) return "DASH";
-  if (/\.(mp4|m4v|webm|mkv|mov|mp3|m4a|aac|ogg|oga|ogv|opus|wav|flac)$/.test(path) || /^(video|audio)\//i.test(type)) return "Direct media";
+  if (/\.(mp4|m4v|webm|mkv|mov|avi|wmv|asf|flv|f4v|mpg|mpeg|m2v|3gp|3g2|vob|mxf|mp3|m4a|aac|ogg|oga|ogv|opus|wav|flac)$/.test(path) || /^(video|audio)\//i.test(type) || /^(application\/ogg|application\/vnd\.rn-realmedia)$/i.test(type)) return "Direct media";
   return null;
 }
 
@@ -80,11 +81,37 @@ export function collectMedia() {
     if (entries.length < 256 && typeof entry.url === "string" && entry.url.length <= 8192)
       entries.push(entry);
   };
-  const walker = document.createTreeWalker(document.documentElement, 1);
+  let walker = document.createTreeWalker(document.documentElement, 1);
+  const shadowRoots = [];
+  let rootsVisited = 0;
   let node = walker.currentNode;
   let visited = 0;
   let group = 0;
+  let metadataVideo = [], metadataVideoType = "";
+  let twitterVideo = [], twitterType = "";
   while (node && visited++ < 4000 && entries.length < 192) {
+    if (node.shadowRoot && shadowRoots.length < 32 && rootsVisited < 32) shadowRoots.push(node.shadowRoot);
+    if (node.localName === "meta") {
+      const name = node.getAttribute?.("property") || node.getAttribute?.("name") || "";
+      if (/^og:video(?::url)?$/i.test(name)) {
+        const entry = { url: node.content, source: "metadata" };
+        metadataVideo = [entry]; metadataVideoType = ""; add(entry);
+      } else if (/^og:video:secure_url$/i.test(name)) {
+        const entry = { url: node.content, type: metadataVideoType, source: "metadata" };
+        metadataVideo.push(entry); add(entry);
+      } else if (/^og:video:type$/i.test(name)) {
+        metadataVideoType = (node.content || "").slice(0, 128);
+        for (const entry of metadataVideo) entry.type = metadataVideoType;
+      } else if (/^twitter:player:stream$/i.test(name)) {
+        const entry = { url: node.content, type: twitterType, source: "metadata" };
+        twitterVideo = [entry]; add(entry);
+      } else if (/^twitter:player:stream:content_type$/i.test(name)) {
+        twitterType = (node.content || "").slice(0, 128);
+        for (const entry of twitterVideo) entry.type = twitterType;
+      }
+    }
+    if (node.localName === "link" && /(?:^|\s)preload(?:\s|$)/i.test(node.rel || "") && ["video", "audio"].includes((node.getAttribute?.("as") || node.as || "").toLowerCase()))
+      add({ url: node.href, type: node.type, source: "preload" });
     if (node.localName === "video" || node.localName === "audio") {
       const id = group++;
       const source = node.localName;
@@ -102,14 +129,18 @@ export function collectMedia() {
       }
     }
     node = walker.nextNode();
+    if (!node && shadowRoots.length && rootsVisited++ < 32) {
+      walker = document.createTreeWalker(shadowRoots.shift(), 1);
+      node = walker.currentNode;
+    }
   }
   // Inspect only the most recent timing entries; rescan after playback starts.
   for (const resource of performance.getEntriesByType("resource").slice(-256)) {
     if (entries.length >= 256) break;
-    if (/\.(m3u8|mpd|mp4|m4v|webm|mkv|mov|mp3|m4a|aac|ogg|oga|ogv|opus|wav|flac)(?:[?#]|$)/i.test(resource.name))
+    if (/\.(m3u8|mpd|mp4|m4v|webm|mkv|mov|avi|wmv|asf|flv|f4v|mpg|mpeg|m2v|3gp|3g2|vob|mxf|mp3|m4a|aac|ogg|oga|ogv|opus|wav|flac)(?:[?#]|$)/i.test(resource.name))
       add({ url: resource.name, source: "resource" });
   }
-  return { title: document.title.slice(0, 512), base: document.baseURI, entries };
+  return { title: document.title.slice(0, 512), page: globalThis.location?.href, base: document.baseURI, entries };
 }
 
 export function isMediaPopup(sender, runtime) {

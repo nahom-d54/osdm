@@ -1,9 +1,9 @@
 # OSDM browser capture — source implementation
 
 Chromium Manifest V3 and Firefox Manifest V3 targets. Automatic interception is
-**off by default** in both the extension and desktop app. Once capture is enabled,
+**on by default** in both the extension and desktop app unless explicitly disabled.
 URL-matching login cookies are included for HTTPS file captures by default, with a
-global opt-out and a one-time browser permission grant. No entire cookie store is
+global opt-out and browser installation/update permission approval. No entire cookie store is
 exported. This is not a store-published/signed extension;
 full real-browser update, permission and cancellation validation remains a
 release gate in [P2 validation](../docs/p2-validation.md).
@@ -96,13 +96,29 @@ compiled UI assets; Vite/React source, dev servers and source maps are not shipp
 `pnpm extension:dev` runs the Vite development entry; ordinary browser preview
 explains that native extension APIs are unavailable instead of faking a connection.
 
-In **Video**, enable **Floating video download button**, approve site access and
-reload existing pages. A bounded isolated-world script places a small control next
+In **Video**, **Floating video download button** and network discovery default on.
+Approve the browser's installation/update site access and reload existing pages.
+A bounded isolated-world script places a small control next
 to a playing, visible non-DRM video. A real user click opens source selection;
 **Review in OSDM** sends one choice, with a one-use 60-second tab/frame-bound token.
 It never patches playback or accepts a source URL supplied by a web page. Disabling
-the setting removes existing controls and unregisters future injections. Discovery
+the setting removes existing controls and leaves future static scripts inactive. Discovery
 can still require **Network media discovery** for blob/embedded players.
+
+The floating panel has a drag header (pointer or arrow keys) with viewport
+clamping, a close button that dismisses it for the current player, and a source
+dropdown listing every discovered video source for the active frame (subtitle
+choice included). The panel re-anchors when the selected player or its source
+changes. Controls stay with the selected playing video and follow a real pointer hover
+when several players are visible. Switching the video URL/source list or
+`srcObject` invalidates pending and displayed selections. A selected caption can
+be offered with its source; a consumed selection cannot be submitted twice.
+Network results are frame/document-scoped so an embedded ad is not silently offered
+as another frame's video. Use **Video → Scan current page** explicitly for sources
+fetched by a parent frame. Cached manifests, typed preloads, declared Open Graph/
+Twitter media and more direct container suffixes are discoverable; known TS/ISO
+segment responses are excluded. These are discovery improvements, not support for
+all HLS/DASH variants, authenticated media, live streams, DRM or local-only blobs.
 
 ### HTTP-backed blob/JavaScript/frame players
 
@@ -120,9 +136,9 @@ pages remain unsupported. Discovery does not add live/DRM or new streaming forma
 
 ### Automatic file interception
 
-Automatic interception remains **off by default**. Enable local integration in
-OSDM, then enable **Capture eligible browser downloads** at the top of the extension
-popup. The switch saves immediately; **Save rules** applies suffix/exclusion edits.
+Automatic interception and local desktop integration default **on** for new
+preferences; saved disabled choices are retained. Use **Capture browser downloads**
+to opt out. The switch saves immediately; **Save rules** applies suffix/exclusion edits.
 Use **Check connection**. EXE matching now uses Chrome/Firefox's
 reported filename as well as the URL suffix, so `Content-Disposition` downloads
 from extensionless endpoints can be captured. Late filename events are handled;
@@ -133,10 +149,26 @@ The transport is extension → browser native messaging → packaged native help
 authenticated random IPv4 loopback endpoint in the app (`127.0.0.1`, not a public
 listener). Missing/disabled helpers leave the browser downloader available. Files
 are canceled in the browser only after OSDM has persisted a prepared capture.
+After handoff OSDM brings its window forward and opens a confirmation dialog.
+The accepted entry is durably paused, not downloading. Choose **Start download**,
+**Download later**, or **Discard capture**. Closing keeps it paused. A restart
+retains accepted entries paused in the queue (cookies are lost on restart); the
+session-only dialog list is not replayed automatically. No lease expires while
+the user is reviewing an already accepted capture.
 
-**Include login cookies** defaults on for automatic HTTPS file captures. Enabling
-capture requests the browser's cookies/HTTPS site permission once, not approval
-for each site. Turn this switch off to capture without automatically reading any
+Captured file handoffs also replay the browser's non-secret identity: the
+request user agent, `Accept`, `Accept-Language` and `Sec-CH-UA*` headers, bounded
+to 16 values and five minutes. `Cookie` is sourced only from the approved cookie
+lookup, never from the header map. Request bodies, response headers, conditional/
+range, transport and context headers (`Referer`, `Origin`, `Sec-Fetch-*`) are
+excluded because they can carry signed URLs or become wrong after a redirect.
+Captured identity applies to the original request; cookies/authorization are
+stripped across redirect origins. If no request was observed, the browser's own
+user agent is still used.
+
+**Include login cookies** defaults on for automatic HTTPS file captures. The
+manifest requests cookies and all-site access during installation/update, not
+approval for each site. Turn this switch off to capture without automatically reading any
 cookies. Existing enabled installations may need **Allow automatic cookie access**
 after updating. Permission refusal/revocation keeps matching downloads in the
 browser rather than silently dropping credentials. Cookie lookup is only for the
@@ -169,8 +201,7 @@ no cookies, Authorization headers, or page messages accompany this operation.
 Missing, disabled, or outdated native integration reports failure and leaves
 browser media untouched.
 
-This uses existing `activeTab` + `scripting` permissions only after opening the
-popup and explicitly scanning; it requests no additional site access. Discovery
+Popup scanning uses `scripting` with browser-approved site access. Discovery
 reads actual video/audio elements, their source/track children, and media-suffixed
 resource timing entries. It visits at most 4,000 DOM elements, inspects the most
 recent 256 resource entries, returns at most 256 entries and 32 unique offers,
@@ -181,11 +212,13 @@ and expire after five minutes or one handoff; nothing stores or logs them.
 
 **Enable manual media detection** and **Disable media detection on this site**
 persist only a boolean and exact site hostnames (not subdomains or source URLs).
-These preferences are independent of automatic download capture. There is no
-background media observer, automatic rescan, bulk offer, or playlist crawl.
-DRM, blob-only players, inaccessible/cross-origin frames, shadow DOM, and sites
-that hide sources in JavaScript are unsupported. Resource timing may not expose
-extensionless manifests. This is discovery, not a DRM or access-control bypass.
+These preferences are independent of automatic download capture. Network
+discovery and floating controls default on for all browser-permitted HTTP(S)
+sites; static all-frame injection and bounded periodic refresh support playing
+videos, including open shadow roots. Controls do not auto-download a source.
+Global/site switches opt out; browser-internal/restricted pages, closed shadow
+roots, DRM and wholly local blobs remain unsupported. Browser site restrictions
+still apply. This is discovery, not a DRM or access-control bypass.
 
 The background accepts popup media commands only from its own `options.html`
 document (including hash routes) and extension ID; tab-opened extension UI also
@@ -219,12 +252,18 @@ Messages (protocol version 1; helper encrypts/decrypts the HTTP envelope):
 - `ping` → `{ok:true,version:1}` only when integration and engine are ready.
 - `status {id}` → state, pending-lease flag, SHA-256 and integrity for one entry;
   no source URL, destination path or captured headers are returned.
-- `prepare {url,filename?,headers?,explicit_credentials?}` → durable paused ID,
+- `prepare {url,filename?,headers?,explicit_credentials?,review?}` → durable paused ID,
   `duplicate` flag. New capture leases expire after 30 seconds. Preparation and
   lease insertion are one transaction; no HTTP transfer or working file starts.
-- `commit {id}` atomically consumes a live lease and queues the transfer. Repeated
+- `commit {id}` atomically consumes a live lease and leaves the transfer paused
+  for desktop review. Repeated
   commits do not enqueue twice. `abort {id}` removes only an uncommitted lease's
   nonrunnable entry, never ordinary history or a committed transfer.
+
+The extension sends `review:true` on every prepare. Older desktop builds reject
+this unknown field before the browser download is canceled, rather than silently
+starting it with the old immediate-start behavior. Update/rebuild both desktop
+and extension together for confirmation-based capture.
 - `queues`, `start_queue {id}`, `stop_queue {id}` support the CLI's authenticated
   `--desktop` saved-queue trigger. They do not accept arbitrary filesystem paths.
 
@@ -246,8 +285,8 @@ live-browser validation before the capture gate can pass.
 Exclusions match the source/referrer host and subdomains. If exclusions are set
 but the browser hides the initiating referrer, automatic capture is skipped rather
 than guessing the page was allowed. File rules match decoded
-URL suffixes; downloads with filenames known only from Content-Disposition are
-not automatically classified yet. `blob:`, `data:`, DRM, POST-body downloads, and
+URL suffixes and browser-reported/late Content-Disposition filenames.
+`blob:`, `data:`, DRM, POST-body downloads, and
 media manifests are not direct-URL capture targets. Explicit context-menu capture
 does not export request bodies or browser authentication state automatically.
 

@@ -23,7 +23,7 @@ async function bootstrap(page: Page, { helper = true, conflict = false, store = 
           case "settings_load": return null;
           case "settings_save": case "engine_open": case "engine_shutdown": case "plugin:event|unlisten": return;
           case "plugin:event|listen": return 1;
-          case "engine_snapshot": case "engine_media_jobs": case "media_offers": return [];
+          case "engine_snapshot": case "engine_media_jobs": case "media_offers": case "capture_reviews": return [];
           case "engine_automation": return { queues: [], schedules: [], membership: {} };
           case "capture_status": return status.capture_enabled;
           case "power_status": return null;

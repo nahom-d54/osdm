@@ -298,6 +298,35 @@ async fn browser_commit_is_idempotent_and_expired_leases_leave_no_phantom() {
 }
 
 #[tokio::test]
+async fn browser_review_acceptance_stays_paused_after_expiry_and_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("queue.db");
+    let engine = Engine::open(&database, Config::default()).await.unwrap();
+    let destination = dir.path().join("review.bin");
+    let id = engine
+        .prepare_capture(DownloadRequest {
+            url: "http://127.0.0.1:1/review".into(),
+            destination: destination.clone(),
+            expected_sha256: None,
+        })
+        .await
+        .unwrap();
+    engine.commit_capture_paused(id).await.unwrap();
+    engine.commit_capture_paused(id).await.unwrap();
+    engine.abort_capture(id).await.unwrap(); // Browser retry must not erase accepted work.
+    engine.automation_tick(4_100_000_000, false).await.unwrap();
+    assert!(engine.automation().await.pending_captures.is_empty());
+    assert_eq!(engine.snapshot().await[0].state, DownloadState::Paused);
+    assert!(!destination.exists());
+    engine.shutdown().await.unwrap();
+    let engine = Engine::open(&database, Config::default()).await.unwrap();
+    assert_eq!(engine.snapshot().await[0].id, id);
+    assert_eq!(engine.snapshot().await[0].state, DownloadState::Paused);
+    assert!(!destination.exists());
+    engine.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn synchronization_keeps_original_and_publishes_only_changed_revisions() {
     use axum::{
         Router,

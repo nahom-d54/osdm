@@ -1048,7 +1048,7 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "download-engine"
-version = "0.1.4-alpha.2"
+version = "0.1.4-alpha.3"
 dependencies = [
  "axum",
  "futures-util",
@@ -2990,7 +2990,7 @@ dependencies = [
 
 [[package]]
 name = "osdm-browser-bridge"
-version = "0.1.4-alpha.2"
+version = "0.1.4-alpha.3"
 dependencies = [
  "base64 0.22.1",
  "chacha20poly1305",
@@ -3006,7 +3006,7 @@ dependencies = [
 
 [[package]]
 name = "osdm-cli"
-version = "0.1.4-alpha.2"
+version = "0.1.4-alpha.3"
 dependencies = [
  "axum",
  "download-engine",
@@ -3020,7 +3020,7 @@ dependencies = [
 
 [[package]]
 name = "osdm-desktop"
-version = "0.1.4-alpha.2"
+version = "0.1.4-alpha.3"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -3049,7 +3049,7 @@ dependencies = [
 
 [[package]]
 name = "osdm-media-capture"
-version = "0.1.4-alpha.2"
+version = "0.1.4-alpha.3"
 dependencies = [
  "quick-xml",
  "serde",
@@ -4272,7 +4272,7 @@ checksum = "33f4fe9184a62d842c9ef383018f3306d8ba224fd9d836f56d7288308847c256"
 
 [[package]]
 name = "site-grabber"
-version = "0.1.4-alpha.2"
+version = "0.1.4-alpha.3"
 dependencies = [
  "scraper",
  "serde",

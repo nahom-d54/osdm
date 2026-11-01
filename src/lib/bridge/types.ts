@@ -27,6 +27,8 @@ export interface EngineBridge {
   automation(): Promise<import("@/lib/types").Automation>;
   configureAutomation(command: import("@/lib/types").AutomationCommand): Promise<import("@/lib/types").Automation>;
   captureStatus(): Promise<boolean>;
+  captureReviews(): Promise<Download[]>;
+  reviewCapture(id: string, action: "start" | "later" | "discard"): Promise<void>;
   enableCapture(enabled: boolean): Promise<void>;
   browserSetupStatus(): Promise<import("@/lib/browser-setup").BrowserSetupStatus>;
   registerBrowserHelper(browser: import("@/lib/browser-setup").BrowserTarget, extensionId: string, confirmed: boolean): Promise<void>;
@@ -41,6 +43,7 @@ export interface EngineBridge {
   autostartStatus(): Promise<boolean>;
   setAutostart(enabled: boolean): Promise<void>;
   setCredentials(id: string, credentials: import("@/lib/types").BasicCredentials | null): Promise<void>;
+  setUserAgent(userAgent: string): Promise<void>;
   updateProperties(id: string, properties: import("@/lib/types").DownloadProperties): Promise<void>;
   updateDestination(id: string, destination: string): Promise<void>;
   /** Read final URL, server filename, length, and range support without enqueueing. */

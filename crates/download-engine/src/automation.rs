@@ -146,6 +146,16 @@ impl Engine {
     /// Commit/abort are idempotent. Only a prepared capture can be aborted;
     /// ordinary history or an already committed transfer is never removed.
     pub async fn commit_capture(&self, id: DownloadId) -> Result<()> {
+        self.finish_capture(id, true).await
+    }
+
+    /// Accept browser ownership durably without scheduling a request. Review
+    /// must not retain an expiring capture lease or lose ephemeral credentials.
+    pub async fn commit_capture_paused(&self, id: DownloadId) -> Result<()> {
+        self.finish_capture(id, false).await
+    }
+
+    async fn finish_capture(&self, id: DownloadId, start: bool) -> Result<()> {
         let mut data = self.inner.data.lock().await;
         if data.stopped {
             return Err(Error::Shutdown);
@@ -170,7 +180,9 @@ impl Engine {
         if download.state != DownloadState::Paused {
             return Err(Error::Invalid("capture was stopped by the user".into()));
         }
-        download.state = DownloadState::Queued;
+        if start {
+            download.state = DownloadState::Queued;
+        }
         self.inner.store.save_automation(&next, &downloads).await?;
         data.automation = next;
         data.downloads = downloads;
@@ -209,13 +221,8 @@ impl Engine {
         id: DownloadId,
         headers: crate::CapturedHeaders,
     ) -> Result<()> {
-        for value in [&headers.cookie, &headers.authorization, &headers.user_agent]
-            .into_iter()
-            .flatten()
-        {
-            if value.len() > 16384 || reqwest::header::HeaderValue::from_str(value).is_err() {
-                return Err(Error::Invalid("invalid captured header".into()));
-            }
+        if !crate::model::valid_captured_headers(&headers) {
+            return Err(Error::Invalid("invalid captured header".into()));
         }
         let data = self.inner.data.lock().await;
         if data.stopped {
@@ -238,7 +245,9 @@ impl Engine {
         }
         let url =
             reqwest::Url::parse(&download.url).map_err(|_| Error::Invalid("invalid URL".into()))?;
-        if url.scheme() != "https"
+        let secret = headers.cookie.is_some() || headers.authorization.is_some();
+        if secret
+            && url.scheme() != "https"
             && !matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"))
         {
             return Err(Error::Invalid("captured credentials require HTTPS".into()));

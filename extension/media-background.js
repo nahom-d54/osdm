@@ -5,7 +5,7 @@ export function installMediaPanel(api, native) {
   const network = installNetworkMedia(api);
   let scan = null;
   const videoScans = new Map();
-  async function scanPage(tab, settings, frameId) {
+  async function scanPage(tab, settings, frameId, context) {
     let results = [];
     try { results = await api.scripting.executeScript({ target: frameId == null ? { tabId: tab.id, allFrames: true } : { tabId: tab.id, frameIds: [frameId] }, func: collectMedia }); }
     catch {
@@ -14,9 +14,14 @@ export function installMediaPanel(api, native) {
       }
     }
     const offers = []; const seen = new Set();
+    const blockedFrames = new Set();
     const add = (candidate) => { if (offers.length < 32 && !seen.has(candidate.url)) { seen.add(candidate.url); offers.push(candidate); } };
-    for (const frame of results.slice(0, 32)) for (const candidate of normalizeMedia(frame.result, frame.result?.base || tab.url)) add(candidate);
-    for (const candidate of await network.offers(tab, settings)) add(candidate);
+    for (const frame of results.slice(0, 32)) {
+      if (!mediaAllowed(frame.result?.page || tab.url, settings)) { blockedFrames.add(frame.frameId); continue; }
+      if (context?.documentId && frame.documentId && frame.documentId !== context.documentId) continue;
+      for (const candidate of normalizeMedia(frame.result, frame.result?.base || tab.url)) add(candidate);
+    }
+    for (const candidate of await network.offers(tab, settings, context, blockedFrames)) add(candidate);
     return offers;
   }
   async function sendOffer(candidate, subtitle) {
@@ -33,22 +38,24 @@ export function installMediaPanel(api, native) {
     const frame = new URL(sender.url);
     if (!await api.permissions.contains({ origins: [`${frame.protocol}//${frame.hostname}/*`] })) return { ok: false, error: "disabled" };
     if (message.op === "video_offers") {
-      const offers = await scanPage(tab, settings, sender.frameId);
+      const offers = await scanPage(tab, settings, sender.frameId, sender);
       const token = crypto.randomUUID();
       if (videoScans.size >= 64) videoScans.delete(videoScans.keys().next().value);
-      videoScans.set(token, { tabId: tab.id, page: tab.url, frameId: sender.frameId, frameUrl: sender.url, offers, at: Date.now() });
+      videoScans.set(token, { tabId: tab.id, page: tab.url, frameId: sender.frameId, frameUrl: sender.url, documentId: sender.documentId, offers, at: Date.now() });
       return { ok: true, token, offers };
     }
     const snapshot = videoScans.get(message.token);
     videoScans.delete(message.token);
-    if (!snapshot || snapshot.tabId !== tab.id || snapshot.page !== tab.url || snapshot.frameId !== sender.frameId || snapshot.frameUrl !== sender.url || Date.now() - snapshot.at > 60000) return { ok: false, error: "rescan" };
+    if (!snapshot || snapshot.tabId !== tab.id || snapshot.page !== tab.url || snapshot.frameId !== sender.frameId || snapshot.frameUrl !== sender.url || snapshot.documentId !== sender.documentId || Date.now() - snapshot.at > 60000) return { ok: false, error: "rescan" };
     const candidate = Number.isInteger(message.index) && snapshot.offers[message.index];
-    return candidate ? sendOffer(candidate) : { ok: false, error: "rescan" };
+    const subtitle = candidate && message.subtitleIndex != null && Number.isInteger(message.subtitleIndex) && candidate.subtitles[message.subtitleIndex];
+    if (!candidate || (message.subtitleIndex != null && !subtitle)) return { ok: false, error: "rescan" };
+    return sendOffer(candidate, subtitle);
   }
   async function handle(message) {
     const [tab] = await api.tabs.query({ active: true, currentWindow: true });
     const settings = await api.storage.local.get(mediaDefaults);
-    if (!tab?.id || !mediaAllowed(tab.url, settings)) {
+    if (!Number.isInteger(tab?.id) || !mediaAllowed(tab.url, settings)) {
       scan = null;
       return { ok: false, error: "disabled" };
     }

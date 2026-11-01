@@ -1,6 +1,6 @@
 [package]
 name = "osdm-media-capture"
-version = "0.1.4-alpha.2"
+version = "0.1.4-alpha.3"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true

@@ -39,7 +39,7 @@ impl Inspector {
                 .redirect(reqwest::redirect::Policy::none())
                 .connect_timeout(Duration::from_secs(15))
                 .read_timeout(Duration::from_secs(30))
-                .user_agent("OSDM/0.1")
+                .user_agent(crate::DEFAULT_USER_AGENT)
                 .build()?,
             shutdown: CancellationToken::new(),
             operations: RwLock::new(()),
@@ -213,6 +213,7 @@ async fn fetch_page_once(
             source.as_str(),
         )
         .header(header::ACCEPT_ENCODING, "identity")
+        .header(header::USER_AGENT, inner.user_agent.read().await.as_str())
         .send()
         .await?;
     let status = response.status().as_u16();

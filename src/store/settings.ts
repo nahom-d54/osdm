@@ -4,6 +4,10 @@ import { DEFAULT_CATEGORIES, type Category } from "@/lib/categories";
 
 export type ThemeChoice = "system" | "dark" | "light";
 
+/** Must match download_engine::DEFAULT_USER_AGENT. */
+export const DEFAULT_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36";
+
 export interface AppSettings {
   theme: ThemeChoice;
   /** Zero means unlimited. Mirrors Config.bytes_per_second. */
@@ -18,6 +22,8 @@ export interface AppSettings {
   max_retries: number;
   /** Last-used download directory for the destination picker default. */
   default_directory: string;
+  /** Default identity for ordinary downloads; captured requests keep theirs. */
+  user_agent: string;
   /** Check GitHub Releases after launch and every six hours. */
   auto_update_check: boolean;
   /** Include alpha/beta GitHub releases in update checks. */
@@ -59,6 +65,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   split_threshold_mib: 16,
   max_retries: 3,
   default_directory: "",
+  user_agent: DEFAULT_USER_AGENT,
   auto_update_check: true,
   include_prereleases: true,
   categories: DEFAULT_CATEGORIES,

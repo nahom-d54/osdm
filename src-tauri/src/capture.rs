@@ -60,6 +60,7 @@ enum Message {
         filename: Option<String>,
         headers: Option<CapturedHeaders>,
         explicit_credentials: Option<bool>,
+        review: Option<bool>,
     },
     Commit {
         id: DownloadId,
@@ -95,7 +96,7 @@ pub(crate) fn start(app: &tauri::AppHandle, directory: PathBuf) {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
             let endpoint = osdm_browser_bridge::Endpoint::new(listener.local_addr()?.port());
             let config = directory.join("capture-enabled");
-            let enabled = std::fs::read_to_string(&config).is_ok_and(|s| s == "enabled");
+            let enabled = capture_default(&config);
             endpoint.save(&directory.join("capture-bridge.bin"))?;
             let state = Arc::new(CaptureBridge {
                 app: app.clone(),
@@ -125,6 +126,54 @@ pub(crate) fn start(app: &tauri::AppHandle, directory: PathBuf) {
 #[tauri::command]
 pub(crate) fn capture_status(state: tauri::State<'_, Arc<CaptureBridge>>) -> bool {
     state.enabled.load(Ordering::Acquire)
+}
+
+fn capture_default(config: &std::path::Path) -> bool {
+    match std::fs::read_to_string(config) {
+        Ok(value) => value == "enabled",
+        Err(error) => error.kind() == std::io::ErrorKind::NotFound,
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn capture_reviews(
+    shell: tauri::State<'_, Shell>,
+) -> Result<Vec<download_engine::Download>, String> {
+    let mut ids = shell.capture_reviews.lock().await;
+    let downloads = shell.engine().await?.snapshot().await;
+    ids.retain(|id| {
+        downloads.iter().any(|download| {
+            download.id == *id && download.state == download_engine::DownloadState::Paused
+        })
+    });
+    Ok(downloads
+        .into_iter()
+        .filter(|download| ids.contains(&download.id))
+        .collect())
+}
+
+#[tauri::command]
+pub(crate) async fn capture_review(
+    shell: tauri::State<'_, Shell>,
+    id: DownloadId,
+    action: String,
+) -> Result<(), String> {
+    let mut ids = shell.capture_reviews.lock().await;
+    if !ids.contains(&id) {
+        return Err("This browser capture has already been reviewed".into());
+    }
+    let engine = shell.engine().await?;
+    match action.as_str() {
+        "start" => engine.resume(id).await.map_err(|error| error.to_string())?,
+        "later" => {}
+        "discard" => engine
+            .remove_download(id, true)
+            .await
+            .map_err(|error| error.to_string())?,
+        _ => return Err("Unknown capture review action".into()),
+    }
+    ids.retain(|value| *value != id);
+    Ok(())
 }
 
 #[tauri::command]
@@ -204,7 +253,10 @@ async fn handle_authorized(
                 filename,
                 headers,
                 explicit_credentials,
+                review,
             } => {
+                if review == Some(false) { return Err("review_required"); }
+                if shell.capture_reviews.lock().await.len() >= 128 { return Err("review_queue_full"); }
                 if url.len() > 32768 || (headers.is_some() && explicit_credentials != Some(true)) {
                     return Err("invalid_request");
                 }
@@ -267,10 +319,20 @@ async fn handle_authorized(
                 Ok(json!({"ok":true,"id":id,"duplicate":false}))
             }
             Message::Commit { id } => {
+                let mut reviews = shell.capture_reviews.lock().await;
+                let pending = engine.automation().await.pending_captures.contains_key(&id);
                 engine
-                    .commit_capture(id)
+                    .commit_capture_paused(id)
                     .await
                     .map_err(|_| "commit_failed")?;
+                if pending && !reviews.contains(&id) {
+                    reviews.push(id);
+                    if let Some(window) = state.app.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.unminimize();
+                        let _ = window.set_focus();
+                    }
+                }
                 Ok(json!({"ok":true}))
             }
             Message::Abort { id } => {
@@ -288,6 +350,18 @@ async fn handle_authorized(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn local_integration_defaults_on_but_retains_explicit_opt_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("capture-enabled");
+        assert!(capture_default(&path));
+        std::fs::write(&path, "disabled").unwrap();
+        assert!(!capture_default(&path));
+        std::fs::write(&path, "enabled").unwrap();
+        assert!(capture_default(&path));
+        std::fs::write(&path, "invalid").unwrap();
+        assert!(!capture_default(&path));
+    }
     #[test]
     fn media_offer_protocol_requires_authenticated_narrow_messages() {
         let endpoint = osdm_browser_bridge::Endpoint::new(12345);

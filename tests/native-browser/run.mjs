@@ -90,6 +90,11 @@ function serveBytes(request, response, target = false) {
   response.on("close", () => clearInterval(timer));
 }
 const secondary = http.createServer((req, res) => {
+  if (req.url === "/playing-video") {
+    res.setHeader("Content-Type", "text/html");
+    res.end('<title>Playing video control fixture</title><video id="player" autoplay muted style="width:320px;height:180px"></video><script>const canvas=document.createElement("canvas");canvas.width=320;canvas.height=180;const ctx=canvas.getContext("2d");setInterval(()=>{ctx.fillStyle="#3843c4";ctx.fillRect(0,0,320,180)},250);player.srcObject=canvas.captureStream(4);player.play();fetch("/manifest-endpoint");</script>');
+    return;
+  }
   if (req.url === "/embedded-player") {
     res.setHeader("Content-Type", "text/html");
     res.end('<title>Embedded blob player</title><video id="player"></video><script>player.src=URL.createObjectURL(new Blob(["synthetic, not played"],{type:"video/mp4"}));fetch("/manifest-endpoint");</script>');
@@ -118,7 +123,7 @@ const server = http.createServer(async (req, res) => {
    }
    if (url.pathname === "/media-player") {
      res.setHeader("Content-Type", "text/html");
-     res.end(`<title>Network media fixture</title><iframe src="http://127.0.0.1:${secondary.address().port}/embedded-player"></iframe>`);
+      res.end(`<title>Network media fixture</title><iframe src="http://127.0.0.1:${secondary.address().port}/embedded-player"></iframe><iframe title="Playing video" style="width:400px;height:300px" src="http://127.0.0.1:${secondary.address().port}/playing-video"></iframe>`);
      return;
    }
   if (url.pathname.startsWith("/control/")) { res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify({ phase: phases.get(url.pathname.split("/").at(-1)) ?? "initial" })); return; }
@@ -144,10 +149,7 @@ async function prepareExtension(target) {
   if (target === "chromium") { manifest.key = key.toString("base64"); manifest.background.service_worker = "native-smoke.js"; }
   else manifest.background.scripts = ["native-smoke.js"];
   manifest.host_permissions = ["http://*/*", "https://*/*"];
-  // Test-only grant in disposable copies: real builds request this permission
-  // from the popup user gesture and default network discovery to off.
-  manifest.permissions.push("webRequest", "cookies");
-  manifest.optional_permissions = manifest.optional_permissions.filter((permission) => !["webRequest", "cookies"].includes(permission));
+  check(manifest.permissions.includes("webRequest") && manifest.permissions.includes("cookies"), "Installed extension must request its default capture permissions");
   const config = { target, nonce, base, sha256 };
   const smoke = `globalThis.OSDM_NATIVE_SMOKE=${JSON.stringify(config)};\n${await fs.readFile(path.join(repo, "tests/native-browser/smoke.js"), "utf8")}`;
   await fs.writeFile(path.join(source, "native-smoke.js"), smoke);
@@ -199,7 +201,6 @@ async function verifyNetworkMedia() {
   const context = runner.context;
   const popup = await context.newPage();
   await popup.goto(`chrome-extension://${chromeId}/options.html`);
-  await popup.evaluate(() => chrome.storage.local.set({ networkMediaEnabled: true }));
   const page = await context.newPage();
   await page.goto(`${base}/media-player`);
   await page.bringToFront();
@@ -218,6 +219,10 @@ async function verifyNetworkMedia() {
     throw error;
   }
   results.push({ target: "chromium", stage: "embedded_blob_network_discovery_pass" });
+  const playing = page.frameLocator('iframe[title="Playing video"]');
+  await playing.getByRole("button", { name: "Download with OSDM" }).click({ timeout: 15000 });
+  await playing.getByLabel("Video source to review").waitFor({ state: "visible", timeout: 15000 });
+  results.push({ target: "chromium", stage: "default_static_playing_video_button_pass" });
   await popup.close(); await page.close();
 }
 async function verifyFile(file) {
@@ -254,8 +259,9 @@ try {
     const source = await prepareExtension(target);
     await launchBrowser(target, source);
     await stage(target, "initial_pass");
-    await verifyFile(path.join(data, "downloads", `native-${target}-auto.bin`));
-    await verifyFile(path.join(data, "downloads", `native-${target}-endpoint.exe`));
+    for (const filename of [`native-${target}-auto.bin`, `native-${target}-endpoint.exe`, `native-${target}-explicit.bin`, `native-${target}-private.bin`]) {
+      check(!await fs.stat(path.join(data, "downloads", filename)).then(() => true, () => false), "An intercepted file was published before desktop review");
+    }
     if (target === "chromium") await verifyNetworkMedia();
     await kill(app); phases.set(target, "offline");
     await stage(target, "offline_pass");

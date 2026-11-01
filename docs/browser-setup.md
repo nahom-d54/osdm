@@ -27,7 +27,10 @@ The three steps are explicit user actions, not silent extension installation:
 3. **Enable and check.** Enable local integration, then click **Check connection**
    in the extension popup. The app shows the last successful authenticated native
    helper ping for this app session. It does not infer that a particular browser
-   or extension is installed. Automatic interception is a separate opt-in setting.
+   or extension is installed. Automatic interception and local integration now
+   default on; either can be switched off independently. Existing saved opt-outs
+   are retained. Cookie/all-site access is approved through browser installation
+   or update permissions, not silently granted by OSDM.
 
 Missing packaged helpers, unavailable extension files, unsupported platforms and
 registration conflicts have explicit recovery instructions. The browser mock

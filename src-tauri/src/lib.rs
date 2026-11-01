@@ -43,6 +43,7 @@ pub(crate) struct Shell {
     updating: AtomicBool,
     tray_available: AtomicBool,
     media_offers: Mutex<Vec<retrieval::MediaOffer>>,
+    capture_reviews: Mutex<Vec<download_engine::DownloadId>>,
     media_inspections:
         Mutex<std::collections::HashMap<String, tokio_util::sync::CancellationToken>>,
 }
@@ -88,14 +89,19 @@ async fn engine_open<R: tauri::Runtime>(
     if running.is_some() {
         return Ok(());
     }
-    let config = shell
-        .settings
-        .load()
-        .await?
+    let settings = shell.settings.load().await?;
+    let config = settings
+        .as_ref()
         .map_or(config, |settings| settings.engine_config());
     let engine = Engine::open(&shell.database, config)
         .await
         .map_err(|e| e.to_string())?;
+    if let Some(settings) = &settings {
+        engine
+            .set_user_agent(&settings.user_agent)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
     let mut events = engine.subscribe();
     let initial = engine.snapshot().await;
     let mut completed: HashSet<_> = initial
@@ -396,6 +402,16 @@ async fn engine_reorder(shell: State<'_, Shell>, ids: Vec<DownloadId>) -> Reply<
 }
 
 #[tauri::command(rename_all = "camelCase")]
+async fn engine_set_user_agent(shell: State<'_, Shell>, user_agent: String) -> Reply<()> {
+    shell
+        .engine()
+        .await?
+        .set_user_agent(&user_agent)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command(rename_all = "camelCase")]
 async fn engine_set_speed_limit(shell: State<'_, Shell>, bytes_per_second: u64) -> Reply<()> {
     shell
         .engine()
@@ -675,6 +691,8 @@ pub fn run() {
             engine_automation,
             engine_configure_automation,
             capture::capture_status,
+            capture::capture_reviews,
+            capture::capture_review,
             browser_setup::browser_setup_set_identities,
             capture::capture_enable,
             browser_setup::browser_setup_status,
@@ -714,6 +732,7 @@ pub fn run() {
             engine_update_url,
             engine_cancel,
             engine_reorder,
+            engine_set_user_agent,
             engine_set_speed_limit,
             engine_snapshot,
             engine_remove_download,
@@ -769,6 +788,7 @@ pub fn run() {
                 updating: AtomicBool::new(false),
                 tray_available: AtomicBool::new(false),
                 media_offers: Mutex::new(Vec::new()),
+                capture_reviews: Mutex::new(Vec::new()),
                 media_inspections: Mutex::new(std::collections::HashMap::new()),
             });
             if test_mode {
@@ -876,6 +896,7 @@ mod tests {
                 updating: AtomicBool::new(false),
                 tray_available: AtomicBool::new(false),
                 media_offers: Mutex::new(Vec::new()),
+                capture_reviews: Mutex::new(Vec::new()),
                 media_inspections: Mutex::new(std::collections::HashMap::new()),
             })
             .manage(power::PowerState::default())
@@ -907,6 +928,7 @@ mod tests {
                 retrieval::engine_configure_site_policy,
                 retrieval::engine_update_site_filters,
                 engine_cancel,
+                engine_set_user_agent,
                 engine_set_speed_limit,
                 engine_snapshot,
                 engine_remove_download,
@@ -953,6 +975,13 @@ mod tests {
         );
         invoke("engine_set_speed_limit", json!({"bytesPerSecond": 1024})).unwrap();
         assert!(invoke("engine_set_speed_limit", json!({"bytes_per_second": 1024})).is_err());
+        invoke(
+            "engine_set_user_agent",
+            json!({"userAgent": "OSDM-IPC/1.0"}),
+        )
+        .unwrap();
+        assert!(invoke("engine_set_user_agent", json!({"user_agent": "wrong key"})).is_err());
+        assert!(invoke("engine_set_user_agent", json!({"userAgent": "line\nbreak"})).is_err());
         let id = invoke("engine_enqueue", json!({"request": {"url":"http://127.0.0.1:9/file", "destination":dir.path().join("file.bin")}})).unwrap();
         invoke("engine_cancel", json!({"id": id})).unwrap();
         let snapshot = invoke("engine_snapshot", json!({})).unwrap();

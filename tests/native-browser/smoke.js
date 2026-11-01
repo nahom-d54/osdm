@@ -5,6 +5,7 @@ import { automaticCookieHeaders } from "./cookies.js";
 const api = globalThis.browser ?? chrome;
 const config = globalThis.OSDM_NATIVE_SMOKE;
 const native = async (message) => {
+  if (message.op === "prepare") message = { ...message, review: true };
   try { return await api.runtime.sendNativeMessage("app.osdm.capture", message); }
   catch { return { ok: false }; }
 };
@@ -25,14 +26,14 @@ async function transfer(suffix, headers = null) {
   check(prepared.ok && !prepared.duplicate, "Native prepare did not create an isolated entry");
   check((await native({ op: "status", id: prepared.id })).pending, "Prepared capture was not pending");
   check((await native({ op: "commit", id: prepared.id })).ok, "Native commit failed");
-  const complete = await waitFor(async () => {
-    const status = await native({ op: "status", id: prepared.id });
-    check(status.state !== "Failed", "Committed transfer failed");
-    return status.state === "Completed" && status;
-  }, "native publication");
-  check(complete.sha256 === config.sha256, "Published bytes did not match the fixture hash");
+  await delay(1000);
+  const status = await native({ op: "status", id: prepared.id });
+  check(status.state === "Paused" && !status.pending, "Accepted browser capture started without desktop confirmation");
+  check((await native({ op: "commit", id: prepared.id })).ok, "Review acceptance was not idempotent");
+  check((await native({ op: "status", id: prepared.id })).state === "Paused", "Repeated commit bypassed desktop review");
 }
 async function browserDownload(suffix, expected, extensionless = false) {
+  await api.storage.session.remove("lastCapture");
   const id = await api.downloads.download({ url: `${config.base}/native-${config.target}-${suffix}${extensionless ? "" : ".bin"}`, saveAs: false, conflictAction: "uniquify" });
   await waitFor(async () => {
     const current = (await api.downloads.search({ id }))[0];
@@ -49,6 +50,12 @@ async function browserDownload(suffix, expected, extensionless = false) {
     check(current?.state !== "interrupted", "Browser fallback was interrupted");
     return current?.state === "complete";
   }, `browser ${expected}`);
+  if (expected === "canceled") await waitFor(async () => {
+    const { lastCapture } = await api.storage.session.get({ lastCapture: null });
+    if (!lastCapture) return false;
+    check(lastCapture.outcome === "captured", "Canceled browser transfer was not accepted for desktop review");
+    return true;
+  }, "durable capture acceptance for review");
 }
 
 async function main() {
@@ -69,7 +76,7 @@ async function main() {
   check(cookieHeaders?.cookie === "session=synthetic-cookie-fixture", "Automatic URL-matching cookie lookup failed");
   check(await automaticCookieHeaders(api, cookieUrl, { cookiesEnabled: false }, {}) === null, "Global cookie opt-out was ignored");
   check(await automaticCookieHeaders(api, "https://cookie-fixture.example/other/fixture.exe", {}, {}) === null, "Cookies escaped their browser URL path scope");
-  const cookieIntent = await native({ op: "prepare", url: cookieUrl, filename: `native-${config.target}-cookie-fixture.exe`, headers: cookieHeaders, explicit_credentials: true });
+  const cookieIntent = await native({ op: "prepare", url: cookieUrl, filename: `native-${config.target}-cookie-fixture.exe`, headers: { ...cookieHeaders, user_agent: navigator.userAgent, headers: [{ name: "accept-language", value: "en-GB" }] }, explicit_credentials: true });
   check(cookieIntent.ok, "Native cookie prepare failed");
   check((await native({ op: "abort", id: cookieIntent.id })).ok, "Native cookie intent cleanup failed");
   await report("automatic_cookie_lookup_and_prepare_pass");

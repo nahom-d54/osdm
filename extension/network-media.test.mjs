@@ -20,9 +20,9 @@ async function harness() {
   const discovery = installNetworkMedia(api);
   await discovery.activate();
   let id = 0;
-  const start = async (url) => { const details = { requestId: String(++id), tabId: 7, frameId: 3, url, statusCode: 200 }; await api.webRequest.onBeforeRequest.fire(details); return details; };
-  return { api, settings, state, start, offers: () => discovery.offers(tab, settings), async record(url, type) {
-    const details = await start(url);
+  const start = async (url, context = {}) => { const details = { requestId: String(++id), tabId: 7, frameId: 3, url, statusCode: 200, ...context }; await api.webRequest.onBeforeRequest.fire(details); return details; };
+  return { api, settings, state, start, offers: (context) => discovery.offers(tab, settings, context), async record(url, type, context) {
+    const details = await start(url, context);
     await api.webRequest.onHeadersReceived.fire({ ...details, responseHeaders: [{ name: "Content-Type", value: type }] });
     await api.webRequest.onCompleted.fire(details);
   }, async navigate() { tab = { ...tab, url: "https://page.example/next" }; await api.tabs.onUpdated.fire(7, { url: tab.url }); }, async revoke() { granted = false; await api.permissions.onRemoved.fire(); } };
@@ -67,4 +67,64 @@ test("observed candidates stay bounded and expire before a later scan", async ()
   assert.equal((await h.offers()).length, 32);
   h.state.networkMedia["7"].at = Date.now() - 300001;
   assert.deepEqual(await h.offers(), []);
+});
+
+test("floating discovery isolates sibling frames and same-URL document replacements", async () => {
+  const h = await harness();
+  const first = { frameId: 3, documentId: "player-document", documentUrl: "https://player.example/embed" };
+  const second = { frameId: 4, documentId: "ad-document", documentUrl: "https://ad.example/embed" };
+  await h.record("https://cdn.example/film.m3u8", "application/x-mpegURL", first);
+  await h.record("https://cdn.example/ad.m3u8", "application/x-mpegURL", second);
+  assert.equal((await h.offers()).length, 2);
+  const context = { frameId: 3, documentId: "player-document", url: first.documentUrl };
+  assert.deepEqual((await h.offers(context)).map((offer) => offer.url), ["https://cdn.example/film.m3u8"]);
+  assert.deepEqual(await h.offers({ ...context, documentId: "new-document" }), []);
+  h.settings.mediaDisabledSites = ["player.example"];
+  assert.deepEqual(await h.offers(context), []);
+});
+
+test("iframe navigation invalidates only its offers and rejects late responses", async () => {
+  const h = await harness();
+  await h.record("https://cdn.example/old.mpd", "application/dash+xml");
+  await h.record("https://cdn.example/other.mpd", "application/dash+xml", { frameId: 4 });
+  const late = await h.start("https://cdn.example/late.mpd");
+  await h.api.webRequest.onBeforeRequest.fire({ requestId: "nav", tabId: 7, frameId: 3, type: "sub_frame", url: "https://player.example/new" });
+  await h.api.webRequest.onHeadersReceived.fire({ ...late, responseHeaders: [{ name: "Content-Type", value: "application/dash+xml" }] });
+  assert.deepEqual((await h.offers()).map((offer) => offer.url), ["https://cdn.example/other.mpd"]);
+});
+
+test("cached manifests and uncommon direct containers are found, not raw extensionless segments", async () => {
+  const h = await harness();
+  await h.record("https://cdn.example/cached.m3u8", "", { statusCode: 304 });
+  await h.record("https://cdn.example/file", " Video/MP4; codecs=avc1 ");
+  await h.record("https://cdn.example/legacy.avi", "application/octet-stream");
+  await h.record("https://cdn.example/segment", "video/mp2t");
+  await h.record("https://cdn.example/fragment", "video/iso.segment");
+  assert.deepEqual((await h.offers()).map((offer) => offer.kind), ["HLS", "Direct media", "Direct media"]);
+});
+
+test("busy pages do not extend older source lifetimes", async () => {
+  const h = await harness();
+  await h.record("https://cdn.example/old.mp4", "video/mp4");
+  h.state.networkMedia["7"].entries[0].at = Date.now() - 300001;
+  await h.record("https://cdn.example/current.mp4", "video/mp4");
+  assert.deepEqual((await h.offers()).map((offer) => offer.url), ["https://cdn.example/current.mp4"]);
+});
+
+test("MV3 request listeners are registered before the first asynchronous permission check", () => {
+  const headers = event(), before = event();
+  let checks = 0;
+  const registered = [];
+  installNetworkMedia({ permissions: { contains: async () => { checks++; return true; } },
+    webRequest: { onHeadersReceived: { ...headers, addListener: (...args) => { registered.push("headers"); headers.addListener(...args); } }, onBeforeRequest: { ...before, addListener: (...args) => { registered.push("before"); before.addListener(...args); } }, onCompleted: event(), onErrorOccurred: event() } });
+  assert.deepEqual(registered, ["headers", "before", "before"]);
+  assert.equal(checks, 0);
+});
+
+test("Chrome initiator origins enforce disabled embedded sites when documentUrl is absent", async () => {
+  const h = await harness();
+  h.settings.mediaDisabledSites = ["disabled.example"];
+  await h.record("https://cdn.example/blocked.mpd", "application/dash+xml", { initiator: "https://disabled.example" });
+  await h.record("https://cdn.example/allowed.mpd", "application/dash+xml", { initiator: "https://allowed.example" });
+  assert.deepEqual((await h.offers()).map((offer) => offer.url), ["https://cdn.example/allowed.mpd"]);
 });

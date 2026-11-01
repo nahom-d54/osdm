@@ -99,6 +99,7 @@ pub(crate) struct Inner {
     pub client: reqwest::Client,
     pub media: crate::media::Inspector,
     pub media_children: Mutex<HashSet<DownloadId>>,
+    pub user_agent: tokio::sync::RwLock<String>,
     pub credentials: Mutex<HashMap<DownloadId, (String, BasicCredentials)>>,
     pub captured_headers: Mutex<HashMap<DownloadId, (String, CapturedHeaders)>>,
     pub connections: Arc<Semaphore>,
@@ -139,25 +140,51 @@ impl Inner {
         } else {
             self.client.request(method, url)
         };
+        // Mark cookie/authorization (and every captured value) sensitive so Debug
+        // and redirect handling never expose credentials to another origin.
+        let sensitive = |value: &str| {
+            reqwest::header::HeaderValue::from_str(value)
+                .ok()
+                .map(|mut value| {
+                    value.set_sensitive(true);
+                    value
+                })
+        };
+        let headers = self.captured_headers.lock().await;
+        let matched = id.and_then(|id| headers.get(&id)).filter(|(origin, _)| {
+            reqwest::Url::parse(url).is_ok_and(|url| url.origin().ascii_serialization() == *origin)
+        });
+        if let Some((_, secret)) = matched {
+            // Exactly one user agent: appending the default as well makes servers
+            // observe an ambiguous duplicate identity.
+            if let Some(value) = secret.user_agent.as_deref().and_then(sensitive) {
+                request = request.header(reqwest::header::USER_AGENT, value);
+            }
+            if let Some(value) = secret.cookie.as_deref().and_then(sensitive) {
+                request = request.header(reqwest::header::COOKIE, value);
+            }
+            if let Some(value) = secret.authorization.as_deref().and_then(sensitive) {
+                request = request.header(reqwest::header::AUTHORIZATION, value);
+            }
+            for header in &secret.headers {
+                if let (Ok(name), Some(value)) = (
+                    reqwest::header::HeaderName::from_bytes(header.name.as_bytes()),
+                    sensitive(&header.value),
+                ) {
+                    request = request.header(name, value);
+                }
+            }
+        }
+        if matched.is_none() || matched.is_some_and(|(_, secret)| secret.user_agent.is_none()) {
+            request = request.header(
+                reqwest::header::USER_AGENT,
+                self.user_agent.read().await.as_str(),
+            );
+        }
+        drop(headers);
         if restricted {
             return request;
         }
-        let headers = self.captured_headers.lock().await;
-        if let Some((origin, secret)) = id.and_then(|id| headers.get(&id))
-            && reqwest::Url::parse(url)
-                .is_ok_and(|url| url.origin().ascii_serialization() == *origin)
-        {
-            if let Some(value) = &secret.cookie {
-                request = request.header(reqwest::header::COOKIE, value);
-            }
-            if let Some(value) = &secret.authorization {
-                request = request.header(reqwest::header::AUTHORIZATION, value);
-            }
-            if let Some(value) = &secret.user_agent {
-                request = request.header(reqwest::header::USER_AGENT, value);
-            }
-        }
-        drop(headers);
         let credentials = self.credentials.lock().await;
         if let Some((origin, secret)) = id.and_then(|id| credentials.get(&id))
             && reqwest::Url::parse(url)
@@ -289,7 +316,7 @@ impl Engine {
             .connect_timeout(Duration::from_secs(15))
             .read_timeout(Duration::from_secs(30))
             .redirect(reqwest::redirect::Policy::limited(10))
-            .user_agent("OSDM/0.1")
+            .user_agent(crate::DEFAULT_USER_AGENT)
             .build()?;
         let (events, _) = broadcast::channel(16);
         let site = crate::site_jobs::SiteRuntime::load(&store).await?;
@@ -319,6 +346,7 @@ impl Engine {
             client,
             media: crate::media::Inspector::new()?,
             media_children: Mutex::new(media_children),
+            user_agent: tokio::sync::RwLock::new(crate::DEFAULT_USER_AGENT.to_owned()),
             credentials: Mutex::new(HashMap::new()),
             captured_headers: Mutex::new(HashMap::new()),
             events,
@@ -1032,6 +1060,16 @@ impl Engine {
             .collect();
         self.inner.store.reorder(&reordered).await?;
         data.downloads = reordered;
+        Ok(())
+    }
+
+    /// Sets the default identity for future requests. Captured browser headers
+    /// still override it for the original origin only.
+    pub async fn set_user_agent(&self, value: &str) -> Result<()> {
+        if !crate::model::valid_user_agent(value) {
+            return Err(Error::Invalid("invalid user agent".into()));
+        }
+        *self.inner.user_agent.write().await = value.to_owned();
         Ok(())
     }
 

@@ -59,7 +59,7 @@ async function bootstrap(page: Page, offers: Offer[] = [], completed = false) {
             case "settings_save": case "engine_open": case "engine_shutdown":
             case "engine_cancel_inspection": case "plugin:event|unlisten": return;
             case "plugin:event|listen": return ++eventId;
-            case "engine_snapshot": case "engine_site_projects": return [];
+            case "engine_snapshot": case "engine_site_projects": case "capture_reviews": return [];
             case "engine_media_jobs": return jobs;
             case "engine_remove_completed_media_job": jobs = []; return;
             case "engine_automation": return { queues: [], schedules: [], membership: {} };

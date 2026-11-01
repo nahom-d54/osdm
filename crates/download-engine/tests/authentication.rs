@@ -4,7 +4,8 @@ use axum::{
     routing::get,
 };
 use download_engine::{
-    BasicCredentials, Config, DownloadProperties, DownloadRequest, DownloadState, Engine,
+    BasicCredentials, Config, DEFAULT_USER_AGENT, DownloadProperties, DownloadRequest,
+    DownloadState, Engine,
 };
 use std::{
     sync::{
@@ -131,7 +132,7 @@ async fn basic_credentials_are_session_only_and_never_forwarded_across_origins()
 
 #[tokio::test]
 async fn captured_headers_are_session_only_and_origin_scoped() {
-    use download_engine::CapturedHeaders;
+    use download_engine::{CapturedHeader, CapturedHeaders};
     let leaks = Arc::new(AtomicUsize::new(0));
     let target_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let target_url = format!("http://{}/file", target_listener.local_addr().unwrap());
@@ -160,6 +161,7 @@ async fn captured_headers_are_session_only_and_origin_scoped() {
                     != Some("session=capture-only")
                     || headers.get("authorization").and_then(|v| v.to_str().ok())
                         != Some("Bearer capture-only")
+                    || headers.get("accept-language").and_then(|v| v.to_str().ok()) != Some("en-GB")
                 {
                     return Err(StatusCode::UNAUTHORIZED);
                 }
@@ -187,6 +189,10 @@ async fn captured_headers_are_session_only_and_origin_scoped() {
         cookie: Some("session=capture-only".into()),
         authorization: Some("Bearer capture-only".into()),
         user_agent: None,
+        headers: vec![CapturedHeader {
+            name: "accept-language".into(),
+            value: "en-GB".into(),
+        }],
     };
     engine.set_captured_headers(id, headers()).await.unwrap();
     assert!(
@@ -230,4 +236,191 @@ async fn captured_headers_are_session_only_and_origin_scoped() {
     );
     target_task.abort();
     origin_task.abort();
+}
+
+#[tokio::test]
+async fn configured_and_captured_identities_apply_only_valid_replay_headers() {
+    use download_engine::{CapturedHeader, CapturedHeaders};
+    use std::sync::Mutex;
+
+    assert_eq!(
+        DEFAULT_USER_AGENT,
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36"
+    );
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/file", listener.local_addr().unwrap());
+    let observed = seen.clone();
+    let server = Router::new().route(
+        "/file",
+        get(move |headers: HeaderMap| {
+            let observed = observed.clone();
+            async move {
+                let read = |name: &str| {
+                    headers
+                        .get(name)
+                        .and_then(|value| value.to_str().ok())
+                        .map(str::to_owned)
+                };
+                observed.lock().unwrap().push((
+                    read("user-agent"),
+                    read("accept-language"),
+                    read("referer"),
+                ));
+                b"identity fixture".as_slice()
+            }
+        }),
+    );
+    let task = tokio::spawn(async move { axum::serve(listener, server).await.unwrap() });
+    let dir = tempfile::tempdir().unwrap();
+    let engine = Engine::open(dir.path().join("queue.db"), Config::default())
+        .await
+        .unwrap();
+    let complete = |engine: Engine, id| async move {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let download = engine
+                    .snapshot()
+                    .await
+                    .into_iter()
+                    .find(|download| download.id == id)
+                    .unwrap();
+                assert_ne!(download.state, DownloadState::Failed);
+                if download.state == DownloadState::Completed {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+    };
+    assert!(engine.set_user_agent("bad\r\nagent").await.is_err());
+    engine.set_user_agent("OSDM-Test/1.0").await.unwrap();
+    let id = engine
+        .enqueue_paused(DownloadRequest {
+            url: url.clone(),
+            destination: dir.path().join("default.bin"),
+            expected_sha256: None,
+        })
+        .await
+        .unwrap();
+    engine.resume(id).await.unwrap();
+    complete(engine.clone(), id).await;
+
+    let captured = engine
+        .enqueue_paused(DownloadRequest {
+            url: url.clone(),
+            destination: dir.path().join("captured.bin"),
+            expected_sha256: None,
+        })
+        .await
+        .unwrap();
+    engine
+        .set_captured_headers(
+            captured,
+            CapturedHeaders {
+                cookie: None,
+                authorization: None,
+                user_agent: Some("Browser/9.0".into()),
+                headers: vec![CapturedHeader {
+                    name: "accept-language".into(),
+                    value: "en-GB".into(),
+                }],
+            },
+        )
+        .await
+        .unwrap();
+    engine.resume(captured).await.unwrap();
+    complete(engine.clone(), captured).await;
+    {
+        let seen = seen.lock().unwrap();
+        assert!(
+            seen.iter()
+                .any(|entry| entry.0.as_deref() == Some("OSDM-Test/1.0"))
+        );
+        assert!(
+            seen.iter().any(|entry| {
+                entry == &(Some("Browser/9.0".into()), Some("en-GB".into()), None)
+            })
+        );
+    }
+
+    let rejected = engine
+        .enqueue_paused(DownloadRequest {
+            url,
+            destination: dir.path().join("rejected.bin"),
+            expected_sha256: None,
+        })
+        .await
+        .unwrap();
+    for (name, value) in [
+        ("host", "evil.example"),
+        ("user-agent", "replayed-twice"),
+        ("accept", "text/html\r\nX-Evil: 1"),
+        ("cookie", "session=secret"),
+        ("referer", "https://page.example/secret"),
+    ] {
+        assert!(
+            engine
+                .set_captured_headers(
+                    rejected,
+                    CapturedHeaders {
+                        cookie: None,
+                        authorization: None,
+                        user_agent: None,
+                        headers: vec![CapturedHeader {
+                            name: name.into(),
+                            value: value.into()
+                        }],
+                    }
+                )
+                .await
+                .is_err()
+        );
+    }
+    // Loopback HTTP is the documented test exception; other plain-HTTP origins
+    // must still reject replayable secrets while accepting a non-secret identity.
+    let insecure = engine
+        .enqueue_paused(DownloadRequest {
+            url: "http://example.invalid/file".into(),
+            destination: dir.path().join("insecure.bin"),
+            expected_sha256: None,
+        })
+        .await
+        .unwrap();
+    assert!(
+        engine
+            .set_captured_headers(
+                insecure,
+                CapturedHeaders {
+                    cookie: Some("session=secret".into()),
+                    authorization: None,
+                    user_agent: Some("Browser/9.0".into()),
+                    headers: vec![]
+                }
+            )
+            .await
+            .is_err(),
+        "plain HTTP must reject replayable secrets"
+    );
+    assert!(
+        engine
+            .set_captured_headers(
+                insecure,
+                CapturedHeaders {
+                    cookie: None,
+                    authorization: None,
+                    user_agent: Some("Browser/9.0".into()),
+                    headers: vec![]
+                }
+            )
+            .await
+            .is_ok(),
+        "a non-secret identity may be replayed over plain HTTP"
+    );
+    engine.cancel(insecure).await.unwrap();
+    engine.cancel(rejected).await.unwrap();
+    engine.shutdown().await.unwrap();
+    task.abort();
 }

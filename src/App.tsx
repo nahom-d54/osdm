@@ -9,6 +9,8 @@ import { getBridge } from "@/lib/bridge";
 import type { MediaOffer } from "@/lib/retrieval";
 import { PowerCountdown } from "@/components/PowerCountdown";
 import { captureUrls } from "@/lib/capture";
+import { BrowserCaptureDialog } from "@/components/BrowserCaptureDialog";
+import type { Download } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { DetailsPanel } from "@/components/DetailsPanel";
 import { DesktopDialogs } from "@/components/DesktopDialogs";
@@ -43,6 +45,8 @@ export default function App() {
   const [mediaOffer, setMediaOffer] = useState<MediaOffer | null>(null);
   const [mediaOffers, setMediaOffers] = useState<MediaOffer[]>([]);
   const [capturedText, setCapturedText] = useState("");
+  const [browserCaptures, setBrowserCaptures] = useState<Download[]>([]);
+  const reviewedCaptures = useRef(new Set<string>());
   const [watchClipboard, setWatchClipboard] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -68,6 +72,21 @@ export default function App() {
   useEffect(() => {
     void init();
   }, [init]);
+
+  useEffect(() => {
+    let disposed = false;
+    let pending = false;
+    const refresh = async () => {
+      if (pending) return;
+      pending = true;
+      try { const captures = await getBridge().captureReviews(); if (!disposed) setBrowserCaptures(captures.filter((capture) => !reviewedCaptures.current.has(capture.id))); }
+      catch { /* Startup/disconnection never invents a capture. */ }
+      finally { pending = false; }
+    };
+    void refresh();
+    const timer = setInterval(() => void refresh(), 1000);
+    return () => { disposed = true; clearInterval(timer); };
+  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -200,6 +219,7 @@ export default function App() {
 
         <AddDownloadDialog open={addOpen} onClose={() => setAddOpen(false)} />
         <AutomationDialog open={automationOpen} onClose={() => setAutomationOpen(false)} initialText={capturedText} />
+        {browserCaptures[0] && <BrowserCaptureDialog key={browserCaptures[0].id} download={browserCaptures[0]} onReviewed={(id) => { reviewedCaptures.current.add(id); if (reviewedCaptures.current.size > 512) reviewedCaptures.current.delete(reviewedCaptures.current.values().next().value!); setBrowserCaptures((captures) => captures.filter((capture) => capture.id !== id)); }} />}
         <MediaDialog open={mediaOpen} onClose={() => setMediaOpen(false)} offer={mediaOffer} />
         <SiteDialog open={siteOpen} onClose={() => setSiteOpen(false)} />
         <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />

@@ -1,7 +1,7 @@
 import type { EngineBridge, EngineErrorListener, SnapshotListener } from "@/lib/bridge/types";
 import type { Download, DownloadRequest, DownloadProperties, EngineConfig, UrlProbe } from "@/lib/types";
 import { suggestFilename } from "@/lib/format";
-import { useSettings } from "@/store/settings";
+import { DEFAULT_USER_AGENT, useSettings } from "@/store/settings";
 import type { AppSettings } from "@/store/settings";
 
 /**
@@ -10,6 +10,8 @@ import type { AppSettings } from "@/store/settings";
  * mirror the engine's serde types exactly.
  */
 export class TauriBridge implements EngineBridge {
+  async captureReviews(): Promise<Download[]> { return this.invoke("capture_reviews"); }
+  async reviewCapture(id: string, action: "start" | "later" | "discard"): Promise<void> { await this.invoke("capture_review", { id, action }); }
   readonly kind = "tauri" as const;
   private stopSettings: (() => void) | null = null;
   private settingsWrites: Promise<void> = Promise.resolve();
@@ -32,12 +34,21 @@ export class TauriBridge implements EngineBridge {
     // Native settings are authoritative when present; engine_open reads the same
     // persisted config, so clearing webview storage cannot reset concurrency.
     await this.invoke("engine_open", { config });
+    // The engine already defaults to DEFAULT_USER_AGENT; only push an explicit
+    // custom identity. Invalid persisted values were rejected by native settings.
+    const userAgent = useSettings.getState().settings.user_agent;
+    if (userAgent !== DEFAULT_USER_AGENT) {
+      await this.invoke("engine_set_user_agent", { userAgent });
+    }
     if (!this.stopSettings) {
       this.stopSettings = useSettings.subscribe((state, previous) => {
         if (state.settings === previous.settings) return;
-        this.settingsWrites = this.settingsWrites.catch(() => {}).then(() =>
-          this.invoke<void>("settings_save", { settings: state.settings }),
-        );
+        this.settingsWrites = this.settingsWrites.catch(() => {}).then(async () => {
+          await this.invoke<void>("settings_save", { settings: state.settings });
+          if (state.settings.user_agent !== previous.settings.user_agent) {
+            await this.invoke("engine_set_user_agent", { userAgent: state.settings.user_agent });
+          }
+        });
         void this.settingsWrites.catch((error) => this.report(error));
       });
     }
@@ -59,6 +70,11 @@ export class TauriBridge implements EngineBridge {
 
   async setCredentials(id: string, credentials: import("@/lib/types").BasicCredentials | null): Promise<void> {
     await this.invoke("engine_set_credentials", { id, credentials });
+  }
+
+  async setUserAgent(userAgent: string): Promise<void> {
+    await this.settingsWrites;
+    await this.invoke("engine_set_user_agent", { userAgent });
   }
 
   async enqueueBatch(items: import("@/lib/types").BatchItem[], startPaused: boolean): Promise<import("@/lib/types").BatchResult[]> {

@@ -15,6 +15,7 @@ import { CategorySettings } from "@/components/CategorySettings";
 import { DesktopSettings } from "@/components/DesktopSettings";
 import { LayoutSettings } from "@/components/LayoutSettings";
 import { BrowserSetup } from "@/components/BrowserSetup";
+import { BrowserIdentitySettings } from "@/components/BrowserIdentitySettings";
 import type { ThemeChoice } from "@/store/settings";
 import { DEFAULT_SETTINGS, useSettings } from "@/store/settings";
 import { useEngine } from "@/store/engine";
@@ -130,6 +131,8 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
         <div role="tabpanel" id={`${tabsId}-Layout-panel`} aria-labelledby={`${tabsId}-Layout`} hidden={page !== "Layout"}><LayoutSettings /></div>
         <div role="tabpanel" id={`${tabsId}-Transfers-panel`} aria-labelledby={`${tabsId}-Transfers`} hidden={page !== "Transfers"} className="space-y-5">
 
+        <BrowserIdentitySettings />
+        <Separator />
         <section>
           <div className="flex items-baseline justify-between gap-2">
             <h3 className="eyebrow">Transfer</h3>

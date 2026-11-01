@@ -65,6 +65,19 @@ batch capture, queues, fixed-interval UTC schedules, safe revision synchronizati
 and Chromium/Firefox capture targets are now implemented in source; see
 [P2 validation and scope limits](p2-validation.md). These are not predictive
 scheduling or content-aware duplicate detection. P1 and P2 release gates remain open.
+Browser interception/local integration and floating/network media detection now
+default on with browser installation/update permission approval and opt-outs.
+Intercepted ordinary files are accepted durably paused and prompt in the desktop;
+only explicit confirmation starts them. Open-shadow-root players are supported,
+but browser-restricted pages, DRM and wholly local media remain outside capture scope.
+The floating panel is draggable/closable with a source dropdown and subtitle
+choice. Captured file handoffs replay the browser user agent and bounded
+non-secret identity headers for the original request; ordinary downloads and
+media inspection use an editable browser-like user agent (Chrome 156 default).
+Discovery now isolates frame/document network sources, invalidates changed-player
+selections, supports declared metadata/preloads and additional direct-file formats,
+and applies per-source expiry. HLS/DASH download-format limits and unauthenticated
+media transport remain unchanged; discovery is not universal playback/download support.
 Disposable Windows Chrome/Firefox checks now cover native capture, app restart,
 missing-helper fallback and cross-origin credential stripping. Manual CI signing/
 draft-upload tooling is available, but no store signing or publication has been

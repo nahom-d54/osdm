@@ -453,6 +453,9 @@ The transfer seam remains `download-engine`. Both bridge adapters expose:
 | `engine_automation` | — | `Automation` |
 | `engine_configure_automation` | `command: AutomationCommand` | `Automation` |
 | `capture_status` / `capture_enable` | — / `enabled: boolean` | boolean / `()` |
+| `engine_set_user_agent` | `userAgent: string` | `()` |
+| `capture_reviews` | — | `Download[]` |
+| `capture_review` | `id: UUID, action: "start" \| "later" \| "discard"` | `()` |
 | `desktop_autostart_status` / `desktop_autostart` | — / `enabled: boolean` | boolean / `()` |
 | `power_status` | — | `{queue_id,action,deadline: UTC seconds \| null}` or null |
 | `power_arm` | `queueId: UUID, action: {kind:"shutdown"} \| {kind:"disconnect",connection:string}, consent: true` | `()` |
@@ -567,9 +570,31 @@ Site project templates are scope-free UI presets, not additional engine authorit
 they set finite filters/budgets, clear confirmation, and retain no URL/destination,
 credentials, schedule or automatic-download consent.
 
+`engine_set_user_agent` validates a single-line header value (1–512 characters)
+and applies it to subsequent ordinary downloads and media inspection. The engine
+default equals the desktop default browser identity. Captured browser downloads
+override it only for their original origin. The UI saves a draft only after local
+validation; the native settings store is authoritative after restart.
+
+Browser `prepare` may include `user_agent` plus up to 16 non-secret replayable
+`headers` (`accept`, `accept-language`, `sec-ch-ua*`). Names/values are
+allowlisted and bounded on both sides. Cookie, Authorization, Range/conditional,
+transport and context headers such as `Referer`/`Origin` are never accepted in
+the replay list. Cookies/authorization are stripped across redirect origins.
+`headers` defaults to an empty list for older callers.
+
 `Engine::prepare_capture` atomically inserts a paused download with a 30-second
-lease. Ordinary resume/queue start cannot admit that lease. Commit consumes the
-lease and queues the ID in one transaction; abort/expiry removes only a pending,
+lease. Ordinary resume/queue start cannot admit that lease. Headless
+`commit_capture` consumes the lease and queues the ID in one transaction. Desktop
+native `commit` uses `commit_capture_paused` instead: ownership is durable but
+the accepted entry cannot run until the user starts it. The extension's `prepare`
+includes `review:true`, so an older desktop rejects the unknown field before
+handoff instead of silently starting the transfer. `capture_reviews` lists
+session review entries; `capture_review` starts, keeps paused, or removes one.
+The UI opens a confirmation without probing/enqueueing, and can update the paused
+destination using the existing command. Accepted entries survive restart paused;
+the dialog queue and cookies are session-only. Missing local-integration settings
+default on; saved disabled preferences remain disabled. Abort/expiry removes only a pending,
 nonrunnable capture. Captured Cookie/Authorization/User-Agent inputs are validated,
 origin-scoped and memory-only, never part of serde Download or settings. They
 clear on source replacement, cancel, completion, removal and shutdown. The browser

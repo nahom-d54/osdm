@@ -11,7 +11,7 @@ import { mediaAllowed, mediaDefaults, mediaSite, toggleMediaSite } from "../medi
 import "./style.css";
 
 const api = globalThis.browser ?? globalThis.chrome;
-const defaults = { ...captureDefaults, ...mediaDefaults, floatingVideos: false, theme: "system" };
+const defaults = { ...captureDefaults, ...mediaDefaults, theme: "system" };
 const routes = [["capture", "Capture", ArrowDownToLine], ["media", "Video", Film], ["rules", "Rules", SlidersHorizontal], ["connection", "Connect", Cable]];
 const subscribeHash = (notify) => { addEventListener("hashchange", notify); return () => removeEventListener("hashchange", notify); };
 function useHashRoute() {
@@ -70,7 +70,7 @@ function App() {
     // native I/O. There is no per-site approval list or background prompting.
     if (enabled && settings.cookiesEnabled && !await api.permissions.request(cookiePermission("all"))) { setError("Cookie permission was declined. Allow it, or turn off login cookie sharing below to capture without cookies."); return; }
     if (enabled && settings.cookiesEnabled) setCookieAccess(true);
-    await save({ enabled }); setNotice(enabled ? "Automatic capture enabled. Keep OSDM open with local integration enabled." : "Capture paused. Browser downloads stay in the browser.");
+    await save({ enabled }); setNotice(enabled ? "Automatic capture enabled. OSDM will ask before starting each file." : "Capture paused. Browser downloads stay in the browser.");
   }
   async function shareCookies(value) {
     if (value && !await api.permissions.request(cookiePermission("all"))) { setError("Cookie permission was declined."); return; }
@@ -98,8 +98,7 @@ function App() {
   async function floating(enabled) {
     if (enabled && !await api.permissions.request({ origins: ["http://*/*", "https://*/*"] })) { setError("Site permission is needed to show video buttons."); return; }
     await api.scripting.unregisterContentScripts({ ids: ["osdm-video-buttons"] }).catch(() => {});
-    if (enabled) await api.scripting.registerContentScripts([{ id: "osdm-video-buttons", matches: ["http://*/*", "https://*/*"], js: ["video-button.js"], allFrames: true, runAt: "document_idle", persistAcrossSessions: true }]);
-    await save({ floatingVideos: enabled }); setNotice(enabled ? "Video buttons enabled. Reload already-open pages; play a video to see its download button." : "Floating video buttons disabled.");
+    await save({ floatingVideos: enabled }); setNotice(enabled ? "Video buttons enabled on all permitted sites. Reload pages opened before installing the extension, then play a video." : "Floating video buttons disabled.");
   }
   async function modifiers() {
     if (!await api.permissions.request({ origins: ["http://*/*", "https://*/*"] })) { setError("Site permission is needed for the Shift/Alt shortcut."); return; }
@@ -113,7 +112,7 @@ function App() {
     <main aria-busy={busy}><div className="page-heading"><span className="eyebrow">{route === "capture" ? "BROWSER → LOCAL ENGINE" : route === "media" ? mediaSite(tab?.url) || "PAGE MEDIA" : route.toUpperCase()}</span><h1 ref={heading} tabIndex={-1}>{title}</h1></div>
       {!loaded ? <p role="status">Loading your settings…</p> : <>
       {route === "capture" && <>
-        <section className="capture-state"><div className="signal" data-on={settings.enabled}><ArrowDownToLine size={26} /></div><div><h2>{settings.enabled ? "Automatic capture is on" : "Let OSDM take over"}</h2><p>{settings.enabled ? "Eligible files are handed to your local download queue." : "Switch it on to send matching browser downloads to OSDM."}</p></div></section>
+        <section className="capture-state"><div className="signal" data-on={settings.enabled}><ArrowDownToLine size={26} /></div><div><h2>{settings.enabled ? "Automatic capture is on" : "Let OSDM take over"}</h2><p>{settings.enabled ? "Eligible files open in OSDM for confirmation. Nothing starts until you approve." : "Switch it on to send matching browser downloads to OSDM."}</p></div></section>
         <section className="panel"><Switch label="Capture browser downloads" checked={settings.enabled} disabled={busy} onChange={(value) => void act(() => enableCapture(value))}>Saves immediately. OSDM must be running.</Switch><Switch label="Include login cookies" checked={settings.cookiesEnabled} disabled={busy} onChange={(value) => void act(() => shareCookies(value))}>On by default for every captured HTTPS download. Turn off to share no cookies automatically.</Switch></section>
         <div className="privacy"><ShieldCheck size={17} /><p>Only cookies matching the download URL leave the browser. They stay in the engine’s memory—not its database—and are never sent to other origins.</p></div>
         {settings.cookiesEnabled && cookieAccess === false && <div className="panel"><p className="hint">Allow cookie access once for automatic capture, or switch login cookie sharing off. No per-site approval is needed.</p><button className="primary" disabled={busy} onClick={() => void act(async () => { const allowed = await api.permissions.request(cookiePermission("all")); setCookieAccess(allowed); if (!allowed) setError("Cookie permission was declined."); })}>Allow automatic cookie access</button></div>}

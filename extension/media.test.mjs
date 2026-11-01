@@ -40,6 +40,13 @@ test("discovery bounds both inspected entries and output offers", () => {
   assert.deepEqual(normalizeMedia({ entries: [...ignored, entries[0]] }, "https://page.example"), []);
 });
 
+test("extended file/container names and whitespace MIME values remain review-only direct candidates", () => {
+  const entries = ["clip.avi", "clip.wmv", "clip.flv", "clip.mpeg", "clip.3gp", "clip.mxf"].map((name) => ({ url: `https://cdn.example/${name}`, source: "resource" }));
+  entries.push({ url: "https://cdn.example/stream", type: " Video/WebM; codecs=vp9 ", source: "preload" });
+  assert.equal(normalizeMedia({ entries }, "https://page.example").length, 7);
+  assert.deepEqual(normalizeMedia({ entries: [{ url: "https://page.example/embed", source: "metadata" }] }, "https://page.example"), []);
+});
+
 test("injected collector reads media/source/track and only recent media resources without controlling playback", () => {
   const video = { localName: "video", currentSrc: "https://media.example/live.m3u8", src: "", children: [
     { localName: "source", src: "https://media.example/backup.mp4", type: "video/mp4" },
@@ -101,7 +108,7 @@ function harness({ reply = { ok: true }, settings = mediaDefaults, frames, denyA
     runtime: { id: "id", getURL: (file) => `moz-extension://id/${file}`, onMessage: { addListener: (fn) => { listener = fn; } } },
     tabs: { query: async () => [tab], get: async () => tab },
     permissions: { contains: async () => true },
-    storage: { local: { get: async () => settings } },
+    storage: { local: { get: async () => settings }, session: { get: async (defaults) => defaults } },
     scripting: { executeScript: async ({ func, target }) => {
       assert.equal(func, collectMedia);
       if (denyAllFrames && target.allFrames) throw new Error("Restricted child frame");
@@ -174,4 +181,20 @@ test("floating offers are bound to the requesting tab/frame and cannot hand off 
   assert.equal((await send({ op: "offer_video", token: next.token, index: 0, url: "https://untrusted.example/forged" })).ok, true);
   assert.equal(h.calls.find((call) => typeof call === "object").url, "https://page.example/film.m3u8?signature=ephemeral");
   assert.equal((await send({ op: "offer_video", token: next.token, index: 0 })).error, "rescan");
+});
+
+test("floating tokens reject same-URL frame reloads and forward only a selected registered subtitle", async () => {
+  const h = harness();
+  const sender = { id: "id", tab: { id: 7, url: "https://page.example/player" }, frameId: 0, url: "https://page.example/player", documentId: "first-document" };
+  const send = (message, source = sender) => new Promise((resolve) => h.listener(message, source, resolve));
+  const first = await send({ op: "video_offers" });
+  assert.equal((await send({ op: "offer_video", token: first.token, index: 0 }, { ...sender, documentId: "second-document" })).error, "rescan");
+  const next = await send({ op: "video_offers" });
+  assert.equal((await send({ op: "offer_video", token: next.token, index: 0, subtitleIndex: 0, subtitle_url: "https://untrusted.example/forged.vtt" })).ok, true);
+  assert.equal(h.calls.find((call) => typeof call === "object").subtitle_url, "https://page.example/sub.vtt");
+});
+
+test("all-frame scans respect a disabled embedded site", async () => {
+  const h = harness({ settings: { ...mediaDefaults, mediaDisabledSites: ["disabled.example"] }, frames: [{ result: { page: "https://disabled.example/player", base: "https://disabled.example/", entries: [{ url: "film.mp4", source: "video" }] } }] });
+  assert.deepEqual((await h.send({ op: "scan_media" })).offers, []);
 });

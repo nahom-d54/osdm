@@ -1,8 +1,29 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{collections::HashSet, path::PathBuf};
 use uuid::Uuid;
 
 pub type DownloadId = Uuid;
+
+/// Browser-like identity for ordinary downloads. The desktop Settings value may
+/// override it at runtime; this remains the headless/CLI default.
+pub const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36";
+
+/// Non-secret request headers that may be replayed from a captured browser
+/// request. Credentials, conditional/range and hop-by-hop headers are excluded.
+pub const REPLAY_HEADER_NAMES: &[&str] = &[
+    "accept",
+    "accept-language",
+    "sec-ch-ua",
+    "sec-ch-ua-mobile",
+    "sec-ch-ua-platform",
+];
+
+pub fn valid_user_agent(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 512
+        && !value.chars().any(char::is_control)
+        && reqwest::header::HeaderValue::from_str(value).is_ok()
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
@@ -65,6 +86,14 @@ pub struct BasicCredentials {
     pub password: String,
 }
 
+/// One replayed, non-secret request header.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CapturedHeader {
+    pub name: String,
+    pub value: String,
+}
+
 /// Explicit browser handoff; memory-only and restricted to the original origin.
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -72,6 +101,41 @@ pub struct CapturedHeaders {
     pub cookie: Option<String>,
     pub authorization: Option<String>,
     pub user_agent: Option<String>,
+    #[serde(default)]
+    pub headers: Vec<CapturedHeader>,
+}
+
+pub(crate) fn valid_captured_headers(headers: &CapturedHeaders) -> bool {
+    if headers.headers.len() > 16
+        || headers.cookie.as_ref().is_some_and(|value| {
+            value.len() > 16384 || reqwest::header::HeaderValue::from_str(value).is_err()
+        })
+        || headers.authorization.as_ref().is_some_and(|value| {
+            value.len() > 16384 || reqwest::header::HeaderValue::from_str(value).is_err()
+        })
+        || headers
+            .user_agent
+            .as_ref()
+            .is_some_and(|value| !valid_user_agent(value))
+    {
+        return false;
+    }
+    let mut names = HashSet::new();
+    let mut total = 0;
+    for header in &headers.headers {
+        let name = header.name.to_ascii_lowercase();
+        total += header.name.len() + header.value.len();
+        if !REPLAY_HEADER_NAMES.contains(&name.as_str())
+            || !names.insert(name)
+            || header.value.is_empty()
+            || header.value.len() > 2048
+            || header.value.chars().any(char::is_control)
+            || reqwest::header::HeaderValue::from_str(&header.value).is_err()
+        {
+            return false;
+        }
+    }
+    total <= 8192
 }
 
 /// Durable non-secret organization metadata. Credentials never belong here.

@@ -78,6 +78,8 @@ function contentTypeFor(value: string): string {
  * the mock probe a Content-Disposition name, and `#probe-fail` rejects the probe.
  */
 export class MockBridge implements EngineBridge {
+  async captureReviews(): Promise<Download[]> { return []; }
+  async reviewCapture(_id: string, _action: "start" | "later" | "discard"): Promise<void> { throw new BridgeError("Browser capture review requires the desktop app."); }
   async inspectMedia(_url: string, _allowedOrigins: string[], _requestId: string): Promise<import("@/lib/retrieval").MediaInspection> {
     throw new BridgeError("Media inspection requires the desktop app. Browser preview does not fetch media.");
   }
@@ -352,6 +354,11 @@ export class MockBridge implements EngineBridge {
     const download = this.find(id).download;
     if (!["Paused", "Failed"].includes(download.state)) throw new BridgeError("Pause before changing credentials.");
     validateCredentials(download.url, _credentials ?? undefined);
+  }
+
+  async setUserAgent(_userAgent: string): Promise<void> {
+    // Browser preview does not open a native engine; settings still persist in
+    // the web store, but no request identity is claimed to have changed.
   }
 
   async updateDestination(id: string, destination: string): Promise<void> {

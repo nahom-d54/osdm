@@ -1,7 +1,13 @@
 import { eligible, normalizedLinks } from "./rules.js";
 import { installMediaPanel } from "./media-background.js";
-import { automaticCookieHeaders, cookieOrigin, cookiePermission, readCookieHeaders } from "./cookies.js";
+import { cookieOrigin, cookiePermission, readCookieHeaders } from "./cookies.js";
 import { captureDefaults } from "./defaults.js";
+import {
+  canonicalUrl,
+  capturedRequestHeaders,
+  findRequest,
+  rememberRequest,
+} from "./request-headers.js";
 
 const api = globalThis.browser ?? chrome;
 const host = "app.osdm.capture";
@@ -14,6 +20,66 @@ const native = async (message) => {
   }
 };
 installMediaPanel(api, native);
+
+// Request identity for captured downloads. In-memory is authoritative for the
+// common same-worker path; session storage bridges an MV3 worker restart. Neither
+// contains request bodies, response headers or cookie-jar values.
+const recentRequests = new Map();
+let headerFlush = null;
+let headerHydration = null;
+const hydrateHeaders = () => headerHydration ??= (async () => {
+  try {
+    const { requestHeaders } = await api.storage.session.get({ requestHeaders: {} });
+    const now = Date.now();
+    for (const [url, entry] of Object.entries(requestHeaders || {})) {
+      if (entry && now - entry.at <= 5 * 60 * 1000) rememberRequest(recentRequests, url, entry.headers.map(([name, value]) => ({ name, value })), entry.at);
+    }
+  } catch { /* An unavailable session cache falls back to the browser identity. */ }
+})();
+const flushHeaders = () => {
+  headerFlush = null;
+  const value = Object.fromEntries(recentRequests);
+  void api.storage.session.set({ requestHeaders: value }).catch(() => {});
+};
+const rememberHeaders = (details) => {
+  if (details.tabId < 0 || !canonicalUrl(details.url)) return;
+  rememberRequest(recentRequests, details.url, details.requestHeaders || [], Date.now());
+  if (!headerFlush) headerFlush = setTimeout(flushHeaders, 500);
+};
+const installHeaderObserver = () => {
+  if (!api.webRequest?.onSendHeaders) return;
+  const filter = { urls: ["http://*/*", "https://*/*"] };
+  try {
+    api.webRequest.onSendHeaders.addListener(rememberHeaders, filter, ["requestHeaders", "extraHeaders"]);
+  } catch {
+    try { api.webRequest.onSendHeaders.addListener(rememberHeaders, filter, ["requestHeaders"]); }
+    catch { /* The browser may withhold request headers; UA fallback remains. */ }
+  }
+};
+installHeaderObserver();
+void hydrateHeaders();
+api.runtime.onInstalled.addListener(() => { void hydrateHeaders(); installHeaderObserver(); });
+
+async function capturedHeadersFor(url, rules, item) {
+  await hydrateHeaders();
+  let cookie = null;
+  if (rules.cookiesEnabled !== false && cookieOrigin(url)) {
+    // A prior one-off context-menu grant for a single site must not silently turn
+    // into automatic cookie sharing after an extension update. The enable gesture
+    // requests this global HTTPS permission; the actual lookup remains URL-scoped.
+    if (!await api.permissions.contains(cookiePermission("all"))) throw new Error("Automatic cookie permission is missing or was revoked");
+    cookie = (await readCookieHeaders(api, url, {
+      cookieStoreId: item?.cookieStoreId,
+      incognito: item?.incognito,
+      tab: item?.tab,
+    }))?.cookie ?? null;
+  }
+  return capturedRequestHeaders(
+    cookie,
+    findRequest(recentRequests, url) || findRequest(recentRequests, item?.url) || [],
+    globalThis.navigator?.userAgent,
+  );
+}
 const notificationIcon =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAABEklEQVR4nO3ayQ0CMRQE0YmFwAiQJCECxstfyoiy1FdP9xMcBnE9nq/3P+eiC9ARgC5ARwC6AB0B6AJ0BKAL0BGALkAHAfh2BBBAAAEEEEAAAQQQQAABjgXIKJ4JEL1n6xMQfWgWQMYd21+ByMMzADLGhwAiJaIAWePDALtlIgCZ41MAdkrtAmSPTwNYLbcDUDE+FWCl5CpA1fh0gNmyKwCV40sAZkrPAlSPLwMYlZ8B6BhfCnA3YgTQNb4c4G7sCk5lv5a3wcip7tb2Onzi+FaAVYSuTu0/iJw0HgEYIXR3wf4fcMJ4FOCUCEAXoCNA9IITjgACCCAABvDrEYAuQEcAugAdAegCdASgC9ARgC5A5wPmNjZoOELPRwAAAABJRU5ErkJggg==";
 const notify = () => {
@@ -45,6 +111,8 @@ async function installMenus() {
 }
 api.runtime.onInstalled.addListener(() => {
   void installMenus();
+  // Static scripts cover future documents; also wire already-open ordinary tabs.
+  void api.tabs.query({}).then((tabs) => Promise.allSettled(tabs.slice(0, 128).filter((tab) => tab.id != null && /^https?:/.test(tab.url || "")).map((tab) => api.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, files: ["video-button.js"] })))).catch(() => {});
 });
 
 async function prepare(url, headers, browserFilename) {
@@ -60,6 +128,7 @@ async function prepare(url, headers, browserFilename) {
     filename,
     headers: headers || null,
     explicit_credentials: !!headers,
+    review: true,
   });
 }
 
@@ -92,11 +161,16 @@ api.contextMenus.onClicked.addListener((info, tab) => {
       .request(cookiePermission(url))
       .then(async (allowed) => {
         if (!allowed) return;
-        await captureExplicit([url], await readCookieHeaders(api, url, { tab }));
+        await hydrateHeaders();
+        const cookie = (await readCookieHeaders(api, url, { tab }))?.cookie ?? null;
+        const headers = capturedRequestHeaders(cookie, findRequest(recentRequests, url) || [], globalThis.navigator?.userAgent);
+        await captureExplicit([url], headers);
       })
       .catch(notify);
   } else if (info.menuItemId === "link") {
-    void captureExplicit([info.linkUrl || info.srcUrl]).catch(notify);
+    void capturedHeadersFor(info.linkUrl || info.srcUrl, { cookiesEnabled: false })
+      .then((headers) => captureExplicit([info.linkUrl || info.srcUrl], headers))
+      .catch(notify);
   } else if (tab?.id != null) {
     void api.scripting
       .executeScript({
@@ -149,11 +223,11 @@ const handleDownload = (item) => {
     )
       return;
     // Only pause after a healthy version handshake. A missing/outdated host never
-    // cancels a browser download. Cookies require separate exact-site consent.
+    // cancels a browser download. Browser-granted cookie access is URL-scoped.
     const health = await native({ op: "ping" });
     if (!health.ok || health.version !== 1) { await captureStatus("disconnected"); return; }
     let headers;
-    try { headers = await automaticCookieHeaders(api, item.finalUrl || item.url, rules, item); }
+    try { headers = await capturedHeadersFor(item.finalUrl || item.url, rules, item); }
     catch { await captureStatus("cookie_unavailable"); return; }
     let prepared;
     try {

@@ -40,6 +40,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - Recovers interrupted downloads as paused. Resume explicitly after reopening.
 - `enqueue_paused` implements Download Later: persist a paused, destination-reserving
   entry without any transfer request or temporary file. Call `resume` to start it.
+- `commit_capture_paused` consumes a browser handoff lease durably while keeping
+  the accepted transfer paused, including across restart. The desktop uses this
+  path for confirmation; `resume` starts only after explicit user action.
+  `commit_capture` retains its headless queue-immediately behavior.
 - Pause/cancel drain workers before returning. Cancellation keeps partial data.
 - `retry` requeues failed/canceled work and revalidates it before resuming.
 - Retries transient failures with exponential backoff and jitter (fallback capped at 120 seconds). `Retry-After` (delta-seconds or HTTP-date) is never shortened. Active downloads keep retrying HTTP 429/503 automatically without exhausting the retry budget. A rate-limited host shares one cooldown window across workers and downloads, and every wait is cancellable.

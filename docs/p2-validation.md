@@ -150,6 +150,70 @@ These automated results do not close the live validation gaps below.
   Live permission prompts, signed Firefox restart, authenticated production sites
   and broad playback compatibility remain unverified.
 
+### Default-on capture and confirmation follow-up — 2026-11-01
+
+- New preferences default interception, local integration, cookies, floating
+  controls and network discovery on; explicit saved opt-outs remain respected.
+  Extension installation/update now requests cookies, webRequest and HTTP(S)
+  host access, with static all-frame video-button scripts. Browser permission
+  withholding/restricted pages are not bypassed.
+- Desktop native commit now uses `commit_capture_paused`, followed by a reviewed
+  start/later/discard dialog; closing and restart retain accepted work paused.
+  New extension prepares include `review:true` to fail safely against older
+  immediate-start desktop builds. The headless engine commit API is unchanged.
+- `pnpm test`: **18 pass**; `pnpm test:extension`: **52 pass**; full Playwright:
+  **64 pass**. Includes opt-outs, 460px width, review cancellation/failure,
+  static/default-on floating controls, shadow-root discovery and accessibility.
+- Engine automation tests: **10 pass**, including paused acceptance surviving
+  lease expiry/restart and idempotent browser retries. Desktop Rust tests:
+  **30 pass**. Workspace/all-targets Clippy with `-D warnings`, formatting,
+  typecheck and production web build: **pass**.
+- Disposable Chrome 138 smoke: **pass** for review-only accepted handoffs,
+  no automatic publication, default static floating control beside a genuinely
+  playing synthetic canvas video in a cross-origin frame, source selection,
+  HTTP-backed blob/JS manifest discovery, cookie lookup, reconnect and missing-host
+  fallback. This is not broad production-player/DRM/authenticated-media coverage.
+  Evidence: `%LOCALAPPDATA%\Temp\opencode\osdm-native-browser-Bov9u0\results.json`.
+  The first direct Cargo build omitted Tauri's custom-protocol feature and could
+  not load the UI without a dev server; the corrected embedded-UI build passed.
+- Firefox package lint remains **0 errors, 0 notices, 2 bundled React DOM
+  warnings**. No installer, signed Firefox or browser-store release is claimed
+  for this follow-up.
+
+### Draggable video panel, captured identity, default user agent — 2026-11-01
+
+- The floating video panel is draggable by pointer or arrow keys with viewport
+  clamping, closable per playing video, and lists every discovered source plus an
+  optional subtitle. Closing does not disable detection; a different player can
+  show it again. UI tests cover drag, close, multi-video choice, stale-source
+  rejection and dropdown labels without query secrets.
+- Captured file downloads replay the browser's user agent and a bounded allowlist
+  of non-secret identity headers (`Accept`, `Accept-Language`, `Sec-CH-UA*`) for
+  the original request. Cookies remain the separately approved, URL-scoped lookup.
+  Request bodies, response headers, context headers (`Referer`/`Origin`/
+  `Sec-Fetch-*`), conditional/range and transport headers are not accepted.
+  Captured identity is memory/session-only; cookies/authorization are stripped
+  across redirect origins.
+- Ordinary downloads and media inspection use an editable browser-like user agent,
+  defaulting to the Chrome 156 Windows string. Native settings validate a
+  single-line header value (1–512 characters), persist it, and apply changes to
+  subsequent requests. The UI saves only a valid draft and can reset the default.
+- Automated evidence: `pnpm test:extension` **65 pass**; full Playwright **72
+  pass**; `cargo test --locked --workspace` **243 pass/3 ignored**; workspace/all-
+  targets Clippy with `-D warnings` and formatting **pass**. Engine tests verify
+  configured/captured identity application, invalid replay-header rejection,
+  plain-HTTP secret rejection and cookie/authorization stripping across redirects;
+  desktop tests cover settings persistence/validation and IPC argument names.
+- Disposable Chrome 138 smoke **pass**: automatic synthetic cookie lookup plus a
+  native prepare carrying the browser user agent and `Accept-Language`, review-only
+  handoffs with no automatic publication, default floating controls in a playing
+  cross-origin frame, embedded blob/JS discovery, reconnect and missing-host
+  fallback; zero credential leaks. Evidence:
+  `%LOCALAPPDATA%\Temp\opencode\osdm-native-browser-0K0fO5\results.json`.
+  The smoke does not prove every production player, CDN header policy, DRM, or
+  authenticated media job. The request-header observer and privacy behavior still
+  need broader real-site review before claiming universal capture.
+
 ## Remaining release checks / scope differences
 
 - Extend the disposable real-browser pass above: verify idle service-worker

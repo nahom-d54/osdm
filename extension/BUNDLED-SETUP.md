@@ -12,11 +12,15 @@ No store publication or silent extension installation is implied.
 3. In OSDM, **Settings → Browser → Set up browser extension**, select the browser
    and register its helper. Additional differently identified copies can be added
    using **Manage extension installations**. Same-ID browser profiles share one entry.
-4. Enable local browser integration in OSDM. In the extension's **Capture** page,
-   enable capture and approve browser cookie access, or turn cookie sharing off.
-   **Connect** checks the actual native connection.
-5. **Video** contains manual discovery and optional floating buttons. **Rules**
-   controls file suffixes/exclusions. No cookies or native permissions are bypassed.
+4. Local integration, capture and cookie sharing default on unless explicitly
+   disabled. Approve the browser's installation/update cookie/all-site permissions;
+   the **Capture** page has opt-outs. **Connect** checks the native connection.
+   Captured files open a desktop confirmation; they do not start automatically.
+5. **Video** contains discovery and default-on floating buttons; the panel can be
+   dragged or closed and lists all sources found for the playing frame. **Rules**
+   controls file suffixes/exclusions. Captured downloads reuse the browser's
+   identity headers; ordinary downloads use the editable default in OSDM
+   Settings → Transfers. No cookies or native permissions are bypassed.
 
 Advanced Windows users can use `register-host.ps1` with an absolute path to
 `osdm-native-host.exe` and the installed extension's actual 32-letter ID. The

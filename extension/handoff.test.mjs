@@ -164,7 +164,10 @@ test("automatic file capture passes only URL-matching cookies through the explic
   assert.deepEqual(await harness({ browserType: "chromium", cookiesEnabled: true, messages, cookieQueries }), ["ping", "cookies", "pause", "prepare", "cancel", "commit"]);
   const prepared = messages.find((message) => message.op === "prepare");
   assert.equal(prepared.explicit_credentials, true);
+  assert.equal(prepared.review, true);
   assert.equal(prepared.headers.cookie, "session=synthetic-test-session");
+  assert.equal(typeof prepared.headers.user_agent, "string");
+  assert.ok(Array.isArray(prepared.headers.headers));
   assert.deepEqual(cookieQueries, [{ url: "https://files.example/a.zip" }]);
 });
 test("revoked automatic-cookie consent permission never pauses or cancels the browser download", async () => {

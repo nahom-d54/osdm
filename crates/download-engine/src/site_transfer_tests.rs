@@ -98,7 +98,8 @@ async fn exact_policy_replay_auth_and_identity_edits_are_guarded() {
                 CapturedHeaders {
                     cookie: Some("secret".into()),
                     authorization: None,
-                    user_agent: None
+                    user_agent: None,
+                    headers: vec![],
                 }
             )
             .await

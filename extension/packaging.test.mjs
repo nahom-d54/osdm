@@ -27,6 +27,10 @@ test("release staging excludes native harnesses, profiles and source secrets", a
   const firefox = await stageExtension("firefox", "1.2.3", path.join(root, "firefox"));
   assert.equal(firefox.browser_specific_settings.gecko.id, "osdm@osdm.app");
   for (const [browser, manifest] of [["chromium", chrome], ["firefox", firefox]]) {
+    assert.ok(manifest.permissions.includes("cookies"));
+    assert.ok(manifest.permissions.includes("webRequest"));
+    assert.deepEqual(manifest.host_permissions, ["http://*/*", "https://*/*"]);
+    assert.ok(manifest.content_scripts.some((script) => script.js.includes("video-button.js") && script.all_frames));
     assert.deepEqual(Object.keys(manifest.icons), ["16", "32", "48", "128"]);
     for (const [size, file] of Object.entries(manifest.icons)) {
       assert.ok(packageFiles.includes(file));

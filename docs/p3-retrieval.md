@@ -81,18 +81,33 @@ are explicit; source completion is not native/browser release validation.
   media item (optional player subtitle), persisted global/exact-site disable, and
   an authenticated native `offer_media` handoff. Nothing downloads automatically,
   no cookies are sent, and no media URLs are stored as analytics.
-- Optional network discovery observes actual response URLs/content types after
-  an explicit `webRequest`/site-permission grant. It can discover HTTP-backed blob
+- Default-on, opt-out network discovery observes actual response URLs/content types
+  with the browser's installation/update `webRequest`/all-site grant. It can discover HTTP-backed blob
   and JavaScript players, extensionless manifests and embedded-frame media without
   injecting into the frame. Normal scans also inspect all browser-permitted frames,
   keeping each player's subtitles frame-local. No page functions are patched or
   JavaScript variables evaluated; no request headers, cookies, response bodies or
   decryption keys are read. The session-only cache is bounded to 8 tabs × 32 sources,
   offers expire after 5 minutes, and navigation/disable clears cached offers.
-- A user-enabled floating button beside a playing video opens explicit source
-  selection. Site permission gates injection; one-use 60-second tab/frame-bound
+- A default-on floating button beside a playing video opens explicit source
+  selection. Static all-frame injection uses approved site permissions and supports
+  open shadow roots, bounded periodic refresh and global/site opt-outs. One-use 60-second tab/frame-bound
   tokens gate handoff. It neither patches playback nor accepts arbitrary URLs from
   page messages. Popup pages are now React/Vite, hash-routed and keyboard accessible.
+- Discovery hardening: required-permission network listeners register synchronously
+  for MV3 wake-up; cached manifests (304), additional direct container suffixes,
+  typed preloads and declared Open Graph/Twitter media sources can be offered.
+  Known TS/ISO fragment MIME types are excluded from network direct-file offers.
+  Sources expire individually, even on busy pages. Floating discovery scopes
+  network candidates to its frame and, where available, browser document identity;
+  frame navigation drops old offers and late responses. The popup remains the
+  explicit all-frame scan for parent-hosted sources. Disabled embedded sites are
+  respected, rather than merely checking the top-level page.
+- Floating controls prefer the largest visible playing video, retain the chosen
+  player, and follow trusted pointer hover between players. Source or MediaStream
+  replacement invalidates pending/displayed selections. One-use source selection
+  can include a registered subtitle, but never a page-supplied URL. None of these
+  discovery improvements expands the downloader's supported streaming subset.
 
 ### Site Grabber
 
@@ -139,6 +154,16 @@ are explicit; source completion is not native/browser release validation.
   never enable scheduling or automatic downloads.
 
 ## Supported subset and explicit limits
+
+Discovery reliability follow-up (2026-11-01): **61 extension tests** and
+**13 extension UI tests** pass, including frame/document isolation, per-source
+expiry, MIME/container classification, changed-player races, subtitle selection,
+hover targeting and declared metadata/preloads. A disposable Chrome 138 native
+smoke also passes embedded blob/JS discovery, default floating controls in a
+playing cross-origin frame, review-only file capture, reconnect and missing-host
+fallback. Evidence: `%LOCALAPPDATA%\Temp\opencode\osdm-native-browser-pvrTGv\results.json`.
+This is not broad production-site playback coverage, nor additional engine-format
+support. The streaming exclusions below remain unchanged.
 
 - HLS capture is **unencrypted MPEG-TS VOD merged into MP4 or Matroska**, including
   one explicitly selected external MPEG-TS audio rendition and one segmented

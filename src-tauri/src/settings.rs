@@ -36,6 +36,14 @@ pub struct Settings {
     pub temporary_directory: String,
     #[serde(default)]
     pub onboarding_complete: bool,
+    /// Default identity for ordinary downloads. Captured browser requests keep
+    /// their own user agent and replayable headers for the original origin.
+    #[serde(default = "default_user_agent")]
+    pub user_agent: String,
+}
+
+fn default_user_agent() -> String {
+    download_engine::DEFAULT_USER_AGENT.into()
 }
 
 fn default_columns() -> Vec<String> {
@@ -195,6 +203,7 @@ impl Default for Settings {
             toolbar_actions: default_toolbar(),
             temporary_directory: String::new(),
             onboarding_complete: false,
+            user_agent: default_user_agent(),
         }
     }
 }
@@ -210,6 +219,11 @@ pub enum Theme {
 impl Settings {
     pub fn validate(&self) -> Result<(), String> {
         self.desktop.validate()?;
+        if !download_engine::valid_user_agent(&self.user_agent) {
+            return Err(
+                "user agent must be a non-empty header-safe value up to 512 characters".into(),
+            );
+        }
         if !self.temporary_directory.is_empty()
             && (!Path::new(&self.temporary_directory).is_absolute()
                 || self.temporary_directory.len() > 32768)
@@ -347,6 +361,14 @@ mod tests {
         settings.visible_columns = default_columns();
         settings.temporary_directory = "relative".into();
         assert!(settings.validate().is_err());
+        settings.temporary_directory = String::new();
+        assert_eq!(settings.user_agent, download_engine::DEFAULT_USER_AGENT);
+        settings.user_agent = "Custom/1.0".into();
+        assert!(settings.validate().is_ok());
+        for invalid in ["".to_owned(), "line\nbreak".into(), "x".repeat(513)] {
+            settings.user_agent = invalid;
+            assert!(settings.validate().is_err());
+        }
     }
 
     #[tokio::test]
@@ -364,6 +386,7 @@ mod tests {
         }))
         .unwrap();
         assert!(settings.auto_update_check && settings.include_prereleases);
+        assert_eq!(settings.user_agent, download_engine::DEFAULT_USER_AGENT);
         assert_eq!(settings.categories, default_categories());
         assert!(settings.remember_last_directory);
         store.save(&settings).await.unwrap();
