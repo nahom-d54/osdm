@@ -93,6 +93,20 @@ export class TauriBridge implements EngineBridge {
     return this.invoke<UrlProbe>("engine_probe", { url });
   }
 
+  async inspectMedia(url: string, allowedOrigins: string[], requestId: string, format: "hls" | "dash" = "hls"): Promise<import("@/lib/retrieval").MediaInspection> {
+    return this.invoke("engine_inspect_media", { url, allowedOrigins, requestId, format });
+  }
+  async cancelMediaInspection(requestId: string): Promise<void> { await this.invoke("engine_cancel_inspection", { requestId }); }
+  async mediaOffers(): Promise<import("@/lib/retrieval").MediaOffer[]> { return this.invoke("media_offers"); }
+  async dismissMediaOffer(id: string): Promise<void> { await this.invoke("media_dismiss_offer", { id }); }
+  async createMediaJob(request: import("@/lib/retrieval").MediaJobRequest): Promise<string> { return this.invoke("engine_create_media_job", { request }); }
+  async mediaJobs(): Promise<import("@/lib/retrieval").MediaJob[]> { return this.invoke("engine_media_jobs"); }
+  async controlMediaJob(id: string, action: "pause" | "resume" | "cancel"): Promise<void> { await this.invoke("engine_control_media_job", { id, action }); }
+  async createSiteProject(request: import("@/lib/site-retrieval").SiteProjectRequest): Promise<string> { return this.invoke("engine_create_site_project", { request }); }
+  async siteProjects(): Promise<import("@/lib/site-retrieval").SiteProject[]> { return this.invoke("engine_site_projects"); }
+  async controlSiteProject(id: string, action: import("@/lib/site-retrieval").SiteAction): Promise<void> { await this.invoke("engine_control_site_project", { id, action }); }
+  async queueSiteResources(id: string, resources: string[]): Promise<string[]> { return this.invoke("engine_queue_site_resources", { id, resources }); }
+
   async pause(id: string): Promise<void> {
     await this.invoke("engine_pause", { id });
   }

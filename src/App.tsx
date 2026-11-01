@@ -3,6 +3,10 @@ import { CircleAlert, X } from "lucide-react";
 
 import { AddDownloadDialog } from "@/components/AddDownloadDialog";
 import { AutomationDialog } from "@/components/AutomationDialog";
+import { MediaDialog } from "@/components/MediaDialog";
+import { SiteDialog } from "@/components/SiteDialog";
+import { getBridge } from "@/lib/bridge";
+import type { MediaOffer } from "@/lib/retrieval";
 import { PowerCountdown } from "@/components/PowerCountdown";
 import { captureUrls } from "@/lib/capture";
 import { Button } from "@/components/ui/button";
@@ -34,6 +38,10 @@ export default function App() {
   const [addOpen, setAddOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [automationOpen, setAutomationOpen] = useState(false);
+  const [mediaOpen, setMediaOpen] = useState(false);
+  const [siteOpen, setSiteOpen] = useState(false);
+  const [mediaOffer, setMediaOffer] = useState<MediaOffer | null>(null);
+  const [mediaOffers, setMediaOffers] = useState<MediaOffer[]>([]);
   const [capturedText, setCapturedText] = useState("");
   const [watchClipboard, setWatchClipboard] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -60,6 +68,21 @@ export default function App() {
   useEffect(() => {
     void init();
   }, [init]);
+
+  useEffect(() => {
+    let disposed = false;
+    let pending = false;
+    const refresh = async () => {
+      if (pending) return;
+      pending = true;
+      try { const offers = await getBridge().mediaOffers(); if (!disposed) setMediaOffers(offers); }
+      catch { /* A disconnected desktop bridge must not manufacture offers. */ }
+      finally { pending = false; }
+    };
+    void refresh();
+    const timer = setInterval(() => void refresh(), 2000);
+    return () => { disposed = true; clearInterval(timer); };
+  }, []);
 
   useEffect(() => {
     let lastClipboard = "";
@@ -133,7 +156,8 @@ export default function App() {
 
         <div className="flex min-w-0 flex-1 flex-col">
           <Toolbar searchRef={searchRef} onAdd={() => setAddOpen(true)} />
-          <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-line-soft px-5 py-2 text-xs sm:px-6"><Button size="sm" variant="outline" onClick={() => { setCapturedText(""); setAutomationOpen(true); }}>Capture & queues</Button><label className="flex items-center gap-2 text-muted-foreground"><input type="checkbox" checked={watchClipboard} onChange={(e) => setWatchClipboard(e.target.checked)} />Offer clipboard links on focus · this session</label></div>
+          <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-line-soft px-5 py-2 text-xs sm:px-6"><Button size="sm" variant="outline" onClick={() => { setCapturedText(""); setAutomationOpen(true); }}>Capture & queues</Button><Button size="sm" variant="outline" onClick={() => { setMediaOffer(null); setMediaOpen(true); }}>Save media</Button><Button size="sm" variant="outline" onClick={() => setSiteOpen(true)}>Site Grabber</Button><label className="flex items-center gap-2 text-muted-foreground"><input type="checkbox" checked={watchClipboard} onChange={(e) => setWatchClipboard(e.target.checked)} />Offer clipboard links on focus · this session</label></div>
+          {mediaOffers.length > 0 && <div role="status" className="flex shrink-0 flex-wrap items-center gap-3 border-b border-brand-line bg-brand-soft px-5 py-2 text-xs sm:px-6"><span className="min-w-0 flex-1 truncate">Browser media: {mediaOffers[0].title || "Untitled media"}{mediaOffers.length > 1 ? ` · ${mediaOffers.length} offers` : ""}</span><Button size="sm" variant="secondary" onClick={() => { setMediaOffer(mediaOffers[0]); setMediaOpen(true); }}>Choose quality & destination</Button><Button size="sm" variant="ghost" onClick={() => { const id = mediaOffers[0].id; void getBridge().dismissMediaOffer(id).then(() => setMediaOffers((offers) => offers.filter((offer) => offer.id !== id))).catch(() => {}); }}>Dismiss</Button></div>}
 
           {notice && (
             <div
@@ -176,6 +200,8 @@ export default function App() {
 
         <AddDownloadDialog open={addOpen} onClose={() => setAddOpen(false)} />
         <AutomationDialog open={automationOpen} onClose={() => setAutomationOpen(false)} initialText={capturedText} />
+        <MediaDialog open={mediaOpen} onClose={() => setMediaOpen(false)} offer={mediaOffer} />
+        <SiteDialog open={siteOpen} onClose={() => setSiteOpen(false)} />
         <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
         <DesktopDialogs />
         <OnboardingDialog />

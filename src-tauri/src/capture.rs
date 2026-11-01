@@ -29,6 +29,12 @@ pub(crate) struct CaptureBridge {
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 enum Message {
     Ping,
+    OfferMedia {
+        url: String,
+        title: String,
+        subtitle_url: Option<String>,
+        kind: Option<String>,
+    },
     Status {
         id: DownloadId,
     },
@@ -154,6 +160,10 @@ async fn handle_authorized(
         let engine = shell.engine().await.map_err(|_| "not_ready")?;
         match message {
             Message::Ping => Ok(json!({"ok":true,"version":1})),
+            Message::OfferMedia { url, title, subtitle_url, kind } => {
+                crate::retrieval::offer(&state.app, url, title, subtitle_url, kind).await?;
+                Ok(json!({"ok":true,"offered":true}))
+            }
             Message::Status { id } => {
                 let download = engine.snapshot().await.into_iter().find(|d| d.id == id).ok_or("not_found")?;
                 let pending = engine.automation().await.pending_captures.contains_key(&id);
@@ -263,6 +273,18 @@ async fn handle_authorized(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn media_offer_protocol_requires_authenticated_narrow_messages() {
+        let endpoint = osdm_browser_bridge::Endpoint::new(12345);
+        let payload = json!({"op":"offer_media", "url":"https://media.example.test/stream.m3u8", "title":"A film", "subtitle_url":"https://media.example.test/captions.vtt"});
+        let envelope = seal(&endpoint.token, &payload, Direction::Request).unwrap();
+        assert!(matches!(
+            authenticated_message(&HeaderMap::new(), &envelope, &endpoint.token),
+            Some(Message::OfferMedia { .. })
+        ));
+        let forbidden = json!({"op":"offer_media", "url":"https://media.example.test/stream.m3u8", "title":"A film", "headers":{"cookie":"synthetic"}});
+        assert!(serde_json::from_value::<Message>(forbidden).is_err());
+    }
     #[test]
     fn rejects_web_origins_missing_or_wrong_tokens_and_unsafe_filenames() {
         let mut headers = HeaderMap::new();

@@ -59,7 +59,45 @@ absolute `path` to that binary, and the allowlist:
 The helper discovers the app through the same XDG data directory as Tauri.
 Linux native host registration has not been interactively validated here.
 
-## Protocol and failure policy
+## Explicit page-media offers
+
+Open the extension popup on an HTTP(S) page and click **Scan current page**.
+Start playback and scan again to inspect newly loaded resources. Choose one
+source and, optionally, one subtitle belonging to that same player, then click
+**Offer selected media to OSDM**. Review the offer in the desktop app before
+downloading. HLS/DASH manifests are offers for desktop inspection, not automatic
+playlist downloads. No player is paused, no browser download is canceled, and
+no cookies, Authorization headers, or page messages accompany this operation.
+Missing, disabled, or outdated native integration reports failure and leaves
+browser media untouched.
+
+This uses existing `activeTab` + `scripting` permissions only after opening the
+popup and explicitly scanning; it requests no additional site access. Discovery
+reads actual video/audio elements, their source/track children, and media-suffixed
+resource timing entries. It visits at most 4,000 DOM elements, inspects the most
+recent 256 resource entries, returns at most 256 entries and 32 unique offers,
+and limits URLs to 8,192 characters. Page titles provide bounded filename hints;
+no quality, format variant, or URL is fabricated. Query strings remain intact
+for handoff but are not displayed. Candidate URLs live only in extension memory
+and expire after five minutes or one handoff; nothing stores or logs them.
+
+**Enable manual media detection** and **Disable media detection on this site**
+persist only a boolean and exact site hostnames (not subdomains or source URLs).
+These preferences are independent of automatic download capture. There is no
+background media observer, automatic rescan, bulk offer, or playlist crawl.
+DRM, blob-only players, inaccessible/cross-origin frames, shadow DOM, and sites
+that hide sources in JavaScript are unsupported. Resource timing may not expose
+extensionless manifests. This is discovery, not a DRM or access-control bypass.
+
+The background accepts media commands only from the exact extension popup URL
+and extension ID, with no content-script tab sender. A scan registers candidates
+in memory; an offer selects only one registered index, never a caller-supplied
+URL. Navigation or extension-worker restart requires a new scan. The native wire
+request is `{op:"offer_media",url,title,subtitle_url?}`; success requires
+`{ok:true}`, while rejection/disconnection is shown without native error text
+(which might contain secrets). The desktop owns offer validation and confirmation.
+
+## Native protocol and failure policy
 
 The extension uses native messaging (`app.osdm.capture`). A small native helper
 loads the current per-user endpoint descriptor **for each message**, then forwards

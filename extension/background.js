@@ -1,4 +1,5 @@
 import { eligible, normalizedLinks } from "./rules.js";
+import { installMediaPanel } from "./media-background.js";
 
 const api = globalThis.browser ?? chrome;
 const host = "app.osdm.capture";
@@ -14,6 +15,7 @@ const native = async (message) => {
     return { ok: false, error: "disconnected" };
   }
 };
+installMediaPanel(api, native);
 const notificationIcon =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAABEklEQVR4nO3ayQ0CMRQE0YmFwAiQJCECxstfyoiy1FdP9xMcBnE9nq/3P+eiC9ARgC5ARwC6AB0B6AJ0BKAL0BGALkAHAfh2BBBAAAEEEEAAAQQQQAABjgXIKJ4JEL1n6xMQfWgWQMYd21+ByMMzADLGhwAiJaIAWePDALtlIgCZ41MAdkrtAmSPTwNYLbcDUDE+FWCl5CpA1fh0gNmyKwCV40sAZkrPAlSPLwMYlZ8B6BhfCnA3YgTQNb4c4G7sCk5lv5a3wcip7tb2Onzi+FaAVYSuTu0/iJw0HgEYIXR3wf4fcMJ4FOCUCEAXoCNA9IITjgACCCAABvDrEYAuQEcAugAdAegCdASgC9ARgC5A5wPmNjZoOELPRwAAAABJRU5ErkJggg==";
 const notify = () => {

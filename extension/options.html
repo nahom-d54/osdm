@@ -35,10 +35,23 @@
         display: block;
         line-height: 1.5;
       }
+      #media-results label { overflow-wrap: anywhere; }
+      select { max-width: 100%; }
     </style>
   </head>
   <body>
     <h1>OSDM capture</h1>
+    <section aria-labelledby="media-heading">
+      <h2 id="media-heading">Page media</h2>
+      <label><input id="media-enabled" type="checkbox" /> Enable manual media detection</label>
+      <label><input id="media-site-disabled" type="checkbox" /> Disable media detection on this site <span id="media-site"></span></label>
+      <button id="media-scan">Scan current page</button>
+      <small>Start playback, then scan again for recently loaded media. Choose one offer; nothing is captured automatically. No cookies are sent.</small>
+      <div id="media-results"></div>
+      <button id="media-offer" disabled>Offer selected media to OSDM</button>
+      <p id="media-status" role="status"></p>
+      <small>DRM, blob-only players, hidden JavaScript sources, and inaccessible frames are unsupported. This does not crawl playlists or change browser playback.</small>
+    </section>
     <small
       >Enable browser integration in OSDM and register the native host first.
       Automatic capture sends no cookies.</small
@@ -70,5 +83,6 @@
       unavailable, automatic capture leaves your browser download alone.</small
     >
     <script type="module" src="options.js"></script>
+    <script type="module" src="media-panel.js"></script>
   </body>
 </html>

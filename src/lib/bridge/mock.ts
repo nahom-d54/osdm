@@ -78,6 +78,19 @@ function contentTypeFor(value: string): string {
  * the mock probe a Content-Disposition name, and `#probe-fail` rejects the probe.
  */
 export class MockBridge implements EngineBridge {
+  async inspectMedia(_url: string, _allowedOrigins: string[], _requestId: string): Promise<import("@/lib/retrieval").MediaInspection> {
+    throw new BridgeError("Media inspection requires the desktop app. Browser preview does not fetch media.");
+  }
+  async cancelMediaInspection(_requestId: string): Promise<void> {}
+  async mediaOffers(): Promise<import("@/lib/retrieval").MediaOffer[]> { return []; }
+  async dismissMediaOffer(_id: string): Promise<void> {}
+  async createMediaJob(_request: import("@/lib/retrieval").MediaJobRequest): Promise<string> { throw new BridgeError("Media downloads require the desktop app and an installed FFmpeg executable."); }
+  async mediaJobs(): Promise<import("@/lib/retrieval").MediaJob[]> { return []; }
+  async controlMediaJob(_id: string, _action: "pause" | "resume" | "cancel"): Promise<void> { throw new BridgeError("Media downloads require the desktop app."); }
+  async createSiteProject(_request: import("@/lib/site-retrieval").SiteProjectRequest): Promise<string> { throw new BridgeError("Site exploration requires the desktop app. Browser preview does not crawl websites."); }
+  async siteProjects(): Promise<import("@/lib/site-retrieval").SiteProject[]> { return []; }
+  async controlSiteProject(_id: string, _action: import("@/lib/site-retrieval").SiteAction): Promise<void> { throw new BridgeError("Site projects require the desktop app."); }
+  async queueSiteResources(_id: string, _resources: string[]): Promise<string[]> { throw new BridgeError("Site projects require the desktop app."); }
   readonly kind = "mock" as const;
   private entries: Entry[] = [];
   private automationState: import("@/lib/types").Automation = { queues: [], schedules: [], membership: {} };

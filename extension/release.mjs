@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { createHash, createPublicKey } from "node:crypto";
 import webExt from "web-ext";
 
-export const packageFiles = ["background.js", "rules.js", "modifiers.js", "options.html", "options.js", "icon.svg"];
+export const packageFiles = ["background.js", "rules.js", "modifiers.js", "options.html", "options.js", "media.js", "media-background.js", "media-panel.js", "icon.svg"];
 const source = fileURLToPath(new URL("./", import.meta.url));
 
 export function validateVersion(version) {

@@ -1,6 +1,7 @@
 mod capture;
 mod completion;
 mod power;
+mod retrieval;
 mod settings;
 mod startup;
 mod updates;
@@ -40,6 +41,9 @@ pub(crate) struct Shell {
     allow_exit: AtomicBool,
     updating: AtomicBool,
     tray_available: AtomicBool,
+    media_offers: Mutex<Vec<retrieval::MediaOffer>>,
+    media_inspections:
+        Mutex<std::collections::HashMap<String, tokio_util::sync::CancellationToken>>,
 }
 
 impl Shell {
@@ -98,6 +102,14 @@ async fn engine_open<R: tauri::Runtime>(
         .filter(|d| d.state == DownloadState::Completed)
         .map(|d| d.id)
         .collect();
+    completed.extend(
+        engine
+            .list_media_jobs()
+            .await
+            .into_iter()
+            .filter(|job| job.state == download_engine::MediaJobState::Completed)
+            .map(|job| job.id),
+    );
     let source = engine.clone();
     let events = tauri::async_runtime::spawn(async move {
         let mut previous = String::new();
@@ -112,9 +124,17 @@ async fn engine_open<R: tauri::Runtime>(
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => source.snapshot().await,
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             };
+            let media_jobs = source.list_media_jobs().await;
+            let media_children: HashSet<_> = media_jobs
+                .iter()
+                .flat_map(|job| job.children.iter().copied())
+                .collect();
             for download in &downloads {
                 while actions.try_join_next().is_some() {}
-                if download.state == DownloadState::Completed && completed.insert(download.id) {
+                if download.state == DownloadState::Completed
+                    && !media_children.contains(&download.id)
+                    && completed.insert(download.id)
+                {
                     let name = download
                         .destination
                         .file_name()
@@ -162,6 +182,53 @@ async fn engine_open<R: tauri::Runtime>(
                             let _ = handle.emit("engine://error", error);
                         }
                     });
+                }
+            }
+            for job in media_jobs {
+                if job.state != download_engine::MediaJobState::Completed
+                    || !completed.insert(job.id)
+                {
+                    continue;
+                }
+                let preferences = app
+                    .state::<Shell>()
+                    .settings
+                    .load()
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default()
+                    .desktop;
+                if !preferences.silent {
+                    let name = job
+                        .destination
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy();
+                    let _ = app
+                        .notification()
+                        .builder()
+                        .title("Media saved")
+                        .body(name)
+                        .show();
+                }
+                if actions.len() < 8 {
+                    let handle = app.clone();
+                    actions.spawn(async move {
+                        if let Err(error) = completion::scan(&preferences, &job.destination).await {
+                            let _ = handle.emit("engine://error", error);
+                        }
+                        if !preferences.silent
+                            && !preferences.sound_file.is_empty()
+                            && let Err(error) =
+                                completion::sound(std::path::Path::new(&preferences.sound_file))
+                                    .await
+                        {
+                            let _ = handle.emit("engine://error", error);
+                        }
+                    });
+                } else {
+                    let _ = app.emit("engine://error", "Media completion action could not run: eight scanner/sound actions are already active. The completed file is kept; scan it manually.");
                 }
             }
             if let Ok(serialized) = serde_json::to_string(&downloads)
@@ -617,6 +684,17 @@ pub fn run() {
             engine_set_credentials,
             engine_update_destination,
             engine_probe,
+            retrieval::engine_inspect_media,
+            retrieval::engine_cancel_inspection,
+            retrieval::engine_create_media_job,
+            retrieval::engine_media_jobs,
+            retrieval::engine_control_media_job,
+            retrieval::media_offers,
+            retrieval::media_dismiss_offer,
+            retrieval::engine_create_site_project,
+            retrieval::engine_site_projects,
+            retrieval::engine_control_site_project,
+            retrieval::engine_queue_site_resources,
             engine_pause,
             engine_resume,
             engine_retry,
@@ -677,6 +755,8 @@ pub fn run() {
                 allow_exit: AtomicBool::new(false),
                 updating: AtomicBool::new(false),
                 tray_available: AtomicBool::new(false),
+                media_offers: Mutex::new(Vec::new()),
+                media_inspections: Mutex::new(std::collections::HashMap::new()),
             });
             if test_mode {
                 tauri::WebviewWindowBuilder::new(
@@ -782,6 +862,8 @@ mod tests {
                 allow_exit: AtomicBool::new(false),
                 updating: AtomicBool::new(false),
                 tray_available: AtomicBool::new(false),
+                media_offers: Mutex::new(Vec::new()),
+                media_inspections: Mutex::new(std::collections::HashMap::new()),
             })
             .manage(power::PowerState::default())
             .invoke_handler(tauri::generate_handler![
@@ -797,6 +879,17 @@ mod tests {
                 engine_set_credentials,
                 engine_update_destination,
                 engine_probe,
+                retrieval::engine_inspect_media,
+                retrieval::engine_cancel_inspection,
+                retrieval::engine_create_media_job,
+                retrieval::engine_media_jobs,
+                retrieval::engine_control_media_job,
+                retrieval::media_offers,
+                retrieval::media_dismiss_offer,
+                retrieval::engine_create_site_project,
+                retrieval::engine_site_projects,
+                retrieval::engine_control_site_project,
+                retrieval::engine_queue_site_resources,
                 engine_cancel,
                 engine_set_speed_limit,
                 engine_snapshot,

@@ -39,6 +39,17 @@ export interface EngineBridge {
   updateDestination(id: string, destination: string): Promise<void>;
   /** Read final URL, server filename, length, and range support without enqueueing. */
   probe(url: string): Promise<UrlProbe>;
+  inspectMedia(url: string, allowedOrigins: string[], requestId: string, format?: "hls" | "dash"): Promise<import("@/lib/retrieval").MediaInspection>;
+  cancelMediaInspection(requestId: string): Promise<void>;
+  mediaOffers(): Promise<import("@/lib/retrieval").MediaOffer[]>;
+  dismissMediaOffer(id: string): Promise<void>;
+  createMediaJob(request: import("@/lib/retrieval").MediaJobRequest): Promise<string>;
+  mediaJobs(): Promise<import("@/lib/retrieval").MediaJob[]>;
+  controlMediaJob(id: string, action: "pause" | "resume" | "cancel"): Promise<void>;
+  createSiteProject(request: import("@/lib/site-retrieval").SiteProjectRequest): Promise<string>;
+  siteProjects(): Promise<import("@/lib/site-retrieval").SiteProject[]>;
+  controlSiteProject(id: string, action: import("@/lib/site-retrieval").SiteAction): Promise<void>;
+  queueSiteResources(id: string, resources: string[]): Promise<string[]>;
   pause(id: string): Promise<void>;
   resume(id: string): Promise<void>;
   retry(id: string): Promise<void>;
