@@ -206,8 +206,28 @@ test("HLS offer preloads its selected subtitle and propagates it with explicit a
     url: "https://cdn.example.test/variant.m3u8", destination: "C:\\FakeDownloads\\fixture.mkv",
     allowed_origins: ["https://cdn.example.test", "https://captions.example.test"],
     ffmpeg_path: "C:\\Tools\\ffmpeg.exe", description: "Fixture HLS", subtitle_url: subtitle,
-    category_id: null, dash_tracks: [],
+    category_id: null, dash_tracks: [], direct_media: false,
   } });
   await expect.poll(() => commands(page, "media_dismiss_offer")).toEqual([{ command: "media_dismiss_offer", args: { id: "hls-offer" } }]);
+  expect(await commands(page, "engine_enqueue")).toEqual([]);
+});
+
+test("direct MP4 subtitle selection uses verified remux rather than ordinary admission", async ({ page }) => {
+  await bootstrap(page, [{ id: "direct-offer", kind: "direct", url: "https://media.example.test/movie.mp4", title: "Direct fixture", subtitle_url: "https://captions.example.test/en.vtt" }]);
+  await page.getByRole("button", { name: "Choose quality & destination", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Save media", exact: true });
+  await dialog.getByLabel("Additional approved origins", { exact: true }).fill("https://captions.example.test");
+  await dialog.getByLabel("Filename", { exact: true }).fill("direct.mkv");
+  await dialog.getByLabel("Merged container", { exact: true }).selectOption("mp4");
+  await expect(dialog.getByLabel("Filename", { exact: true })).toHaveValue("direct.mp4");
+  await dialog.getByLabel("Installed FFmpeg executable", { exact: true }).fill("C:\\Tools\\ffmpeg.exe");
+  await dialog.getByRole("button", { name: "Save selected media", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.__retrievalIpc.pendingPaths)).toBe(1);
+  await page.evaluate(() => window.__retrievalIpc.resolvePaths(false));
+  await expect.poll(() => commands(page, "engine_create_media_job")).toHaveLength(1);
+  expect((await commands(page, "engine_create_media_job"))[0].args).toMatchObject({ request: {
+    direct_media: true, destination: "C:\\FakeDownloads\\direct.mp4", dash_tracks: [],
+    subtitle_url: "https://captions.example.test/en.vtt", allowed_origins: ["https://captions.example.test"],
+  } });
   expect(await commands(page, "engine_enqueue")).toEqual([]);
 });

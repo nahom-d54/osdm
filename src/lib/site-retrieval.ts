@@ -18,6 +18,7 @@ export interface SiteResource {
   relative_path: string;
   size: number | null;
   download_id: string | null;
+  description?: string;
 }
 
 export interface SiteProject {
@@ -29,9 +30,38 @@ export interface SiteProject {
   bytes: number;
   resources: SiteResource[];
   error: string | null;
+  policy?: SitePolicy;
+  generation?: number;
+  last_run?: number | null;
+  schedule_note?: string | null;
+  extensions?: string[];
+  excluded_paths?: string[];
 }
 
-export type SiteAction = "pause" | "resume" | "cancel" | "delete";
+export interface SitePolicy {
+  automatic_downloads: boolean;
+  max_concurrent_downloads: number;
+  cache_responses: boolean;
+  next_run: number | null;
+  interval_seconds: number | null;
+  catch_up_on_startup: boolean;
+}
+
+export const DEFAULT_SITE_POLICY: SitePolicy = {
+  automatic_downloads: false, max_concurrent_downloads: 1, cache_responses: false,
+  next_run: null, interval_seconds: null, catch_up_on_startup: false,
+};
+
+export function utcSiteSchedule(value: string, minutes: string): Pick<SitePolicy, "next_run" | "interval_seconds"> {
+  if (!value) return { next_run: null, interval_seconds: null };
+  if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d$/.test(value)) throw new Error("Enter a valid UTC date and time.");
+  const next = Date.parse(`${value}:00Z`) / 1000;
+  if (!Number.isSafeInteger(next) || next < 0 || next > 253402300799 || new Date(next * 1000).toISOString().slice(0, 16) !== value) throw new Error("Enter a valid UTC date and time.");
+  if (minutes && (!/^\d+$/.test(minutes) || Number(minutes) < 1 || Number(minutes) > 525600)) throw new Error("Repeat minutes must be a whole number from 1 to 525,600.");
+  return { next_run: next, interval_seconds: minutes ? Number(minutes) * 60 : null };
+}
+
+export type SiteAction = "pause" | "resume" | "cancel" | "delete" | "recheck";
 
 export function scopeFor(seed: string): string {
   try {

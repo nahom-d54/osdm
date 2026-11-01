@@ -162,6 +162,9 @@ pub struct Resource {
     pub known_bytes: Option<u64>,
     pub metadata_requested: bool,
     pub selected_bytes: Option<u64>,
+    /// Bounded plain text from the link/player, never executable markup.
+    #[serde(default)]
+    pub description: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -520,6 +523,29 @@ impl Project {
                 && let Ok(url) = base.join(raw)
             {
                 self.enqueue(url.as_str(), intent.depth.saturating_add(1))?;
+                if let Some(key) = canonical(url.as_str())
+                    && let Some(resource) = self.0.resources.get_mut(key.as_str())
+                    && resource.description.is_empty()
+                {
+                    let text: String = if let Some(label) = node
+                        .value()
+                        .attr("title")
+                        .or_else(|| node.value().attr("alt"))
+                    {
+                        label
+                            .chars()
+                            .filter(|character| !character.is_control())
+                            .take(160)
+                            .collect()
+                    } else {
+                        node.text()
+                            .flat_map(str::chars)
+                            .filter(|character| !character.is_control())
+                            .take(160)
+                            .collect()
+                    };
+                    resource.description = text.trim().to_owned();
+                }
             }
         }
         Ok(())
@@ -639,6 +665,7 @@ impl Project {
                     known_bytes: None,
                     metadata_requested: false,
                     selected_bytes: None,
+                    description: String::new(),
                 },
             );
         }
@@ -738,6 +765,8 @@ impl Project {
                 .map(|(_, e)| e.to_ascii_lowercase())
                 .unwrap_or_default();
             if key != &r.url
+                || r.description.len() > 1024
+                || r.description.chars().any(char::is_control)
                 || !s.seen.contains(key)
                 || !s.config.extensions.contains(&ext)
                 || (r.known_bytes.is_some() && !r.metadata_requested)

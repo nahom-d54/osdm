@@ -43,6 +43,7 @@ fn request(origin: &str, directory: &Path) -> MediaJobRequest {
         subtitle_url: None,
         category_id: None,
         dash_tracks: vec![],
+        direct_media: false,
     }
 }
 async fn terminal(engine: &Engine, id: uuid::Uuid) -> download_engine::MediaJob {
@@ -669,6 +670,104 @@ async fn real_ffmpeg_dash_job_merges_only_explicitly_selected_tracks() {
 }
 
 #[tokio::test]
+async fn direct_mp4_can_attach_webvtt_and_publish_verified_mp4() {
+    let Some(ffmpeg) = ffmpeg() else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("input.mp4");
+    let status = tokio::process::Command::new(&ffmpeg)
+        .args([
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=64x64:rate=10",
+            "-t",
+            "1",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-pix_fmt",
+            "yuv420p",
+            "-threads",
+            "1",
+            "-movflags",
+            "+faststart",
+        ])
+        .arg(&input)
+        .status()
+        .await
+        .unwrap();
+    assert!(status.success());
+    let bytes = Arc::new(tokio::fs::read(&input).await.unwrap());
+    let source = server(
+        Router::new()
+            .route(
+                "/direct.mp4",
+                get(move || {
+                    let bytes = bytes.clone();
+                    async move { bytes.as_ref().clone() }
+                }),
+            )
+            .route(
+                "/captions.vtt",
+                get(|| async { "WEBVTT\n\n00:00.000 --> 00:00.800\nCaption fixture\n" }),
+            ),
+    )
+    .await;
+    let engine = Engine::open(dir.path().join("direct.db"), Config::default())
+        .await
+        .unwrap();
+    let mut req = request(&source.origin, dir.path());
+    req.url = format!("{}/direct.mp4", source.origin);
+    req.subtitle_url = Some(format!("{}/captions.vtt", source.origin));
+    req.destination = dir.path().join("captions.mp4");
+    req.ffmpeg_path = ffmpeg.clone();
+    req.direct_media = true;
+    let id = engine.create_media_job(req).await.unwrap();
+    let job = terminal(&engine, id).await;
+    assert_eq!(job.state, MediaJobState::Completed, "{:?}", job.error);
+    assert_eq!(job.children.len(), 1);
+    let output = tokio::fs::read(&job.destination).await.unwrap();
+    assert_eq!(&output[4..8], b"ftyp");
+    use sha2::Digest;
+    assert_eq!(
+        job.sha256.as_deref(),
+        Some(format!("{:x}", sha2::Sha256::digest(&output)).as_str())
+    );
+    let ffprobe = ffmpeg.with_file_name(if cfg!(windows) {
+        "ffprobe.exe"
+    } else {
+        "ffprobe"
+    });
+    if ffprobe.is_file() {
+        let probe = tokio::process::Command::new(ffprobe)
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "s",
+                "-show_entries",
+                "stream=codec_name",
+                "-of",
+                "csv=p=0",
+            ])
+            .arg(&job.destination)
+            .output()
+            .await
+            .unwrap();
+        assert!(probe.status.success());
+        assert!(String::from_utf8_lossy(&probe.stdout).contains("mov_text"));
+    }
+    engine.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn dash_job_rejects_unapproved_or_unknown_representations_before_any_download() {
     let source = server(Router::new().route(
         "/vod.mpd",
@@ -811,14 +910,14 @@ async fn revision_five_upgrade_adds_media_ledger_and_rejects_old_admission_guard
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(version, 7);
+    assert_eq!(version, 8);
     assert!(!(0..=5).contains(&version));
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM media_jobs")
         .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(count, 0);
-    sqlx::query("PRAGMA user_version=8")
+    sqlx::query("PRAGMA user_version=9")
         .execute(&pool)
         .await
         .unwrap();

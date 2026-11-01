@@ -179,7 +179,11 @@ pub async fn remux_local(
     if cancel.is_cancelled() {
         return Err(MergeError::Cancelled);
     }
-    let status = run_command(&mut command, cancel).await?;
+    let max_output = plan
+        .max_input_bytes
+        .saturating_mul(2)
+        .saturating_add(16 * 1024 * 1024);
+    let status = run_command(&mut command, cancel, Some((output.path(), max_output))).await?;
     if !status.success()
         || output
             .as_file()
@@ -196,14 +200,49 @@ pub async fn remux_local(
 async fn run_command(
     command: &mut Command,
     cancel: &CancellationToken,
+    output: Option<(&Path, u64)>,
 ) -> Result<std::process::ExitStatus, MergeError> {
     command.kill_on_drop(true);
     let mut child = command.spawn().map_err(|_| MergeError::Remux)?;
-    tokio::select! {
+    let deadline = tokio::time::sleep(std::time::Duration::from_secs(3600));
+    tokio::pin!(deadline);
+    let monitor = async {
+        if let Some((path, cap)) = output {
+            let mut tick = tokio::time::interval(std::time::Duration::from_millis(100));
+            loop {
+                tick.tick().await;
+                if tokio::fs::metadata(path)
+                    .await
+                    .map_err(|_| MergeError::Io)?
+                    .len()
+                    > cap
+                {
+                    return Err::<(), _>(MergeError::Limit);
+                }
+            }
+        } else {
+            std::future::pending::<Result<(), MergeError>>().await
+        }
+    };
+    tokio::pin!(monitor);
+    let status = tokio::select! {
         biased;
-        _ = cancel.cancelled() => { let _ = child.kill().await; let _ = child.wait().await; Err(MergeError::Cancelled) }
-        status = child.wait() => status.map_err(|_| MergeError::Remux),
+        _ = cancel.cancelled() => { let _ = child.kill().await; let _ = child.wait().await; return Err(MergeError::Cancelled); }
+        _ = &mut deadline => { let _ = child.kill().await; let _ = child.wait().await; return Err(MergeError::Limit); }
+        result = &mut monitor => { let _ = child.kill().await; let _ = child.wait().await; return Err(result.err().unwrap_or(MergeError::Limit)); }
+        status = child.wait() => status.map_err(|_| MergeError::Remux)?,
+    };
+    if let Some((path, cap)) = output {
+        let metadata = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(MergeError::Cancelled),
+            result = tokio::fs::metadata(path) => result.map_err(|_| MergeError::Io)?,
+        };
+        if metadata.len() > cap {
+            return Err(MergeError::Limit);
+        }
     }
+    Ok(status)
 }
 
 async fn prepare(
@@ -227,7 +266,17 @@ async fn prepare(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    command.args(["-nostdin", "-hide_banner", "-loglevel", "error", "-y"]);
+    command.args([
+        "-nostdin",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-max_alloc",
+        "67108864",
+        "-threads",
+        "1",
+        "-y",
+    ]);
     let mut remaining = plan.max_input_bytes;
     for (index, track) in plan.tracks.iter().enumerate() {
         let path = dir.path().join(format!("track-{index}"));
@@ -345,10 +394,44 @@ mod tests {
         });
         let start = std::time::Instant::now();
         assert_eq!(
-            run_command(&mut command, &cancel).await,
+            run_command(&mut command, &cancel, None).await,
             Err(MergeError::Cancelled)
         );
         assert!(start.elapsed() < std::time::Duration::from_secs(10));
         thread.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn output_guard_kills_and_reaps_a_child_before_returning_limit() {
+        #[cfg(windows)]
+        let mut command = {
+            let root = std::env::var_os("WINDIR").expect("Windows system directory");
+            let mut command = Command::new(PathBuf::from(root).join("System32/ping.exe"));
+            command.args(["-n", "60", "127.0.0.1"]);
+            command
+        };
+        #[cfg(not(windows))]
+        let mut command = {
+            let mut command = Command::new("/bin/sleep");
+            command.arg("60");
+            command
+        };
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), b"oversized-output-fixture").unwrap();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            run_command(
+                &mut command,
+                &CancellationToken::new(),
+                Some((file.path(), 1)),
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result, Err(MergeError::Limit));
     }
 }

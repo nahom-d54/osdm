@@ -13,8 +13,9 @@ not a claim that every Site Grabber workflow has passed its release gate.
   browser-cookie export or cross-origin credential forwarding is permitted.
 - Page and file filters narrow the approved scope. Changing filters must not
   implicitly broaden origin/path authority or discard already published files.
-- Discovery is bounded and reviewable. Resource selection is an explicit action;
-  finding a media element or link does not authorize downloading it.
+- Discovery is bounded and reviewable. Resource selection is explicit unless the
+  user confirms automatic matching downloads for this project. A discovered link
+  alone never expands that consent beyond approved filters/scope and budgets.
 
 ## Robots and request boundaries
 
@@ -51,6 +52,16 @@ not a claim that every Site Grabber workflow has passed its release gate.
   Deleting a project must not implicitly delete downloaded files.
 - Pause/cancel/shutdown must drain project workers. Restart must not silently
   resume exploration, broaden filters or repeat a consumed schedule decision.
+- Saved UTC schedules are explicit consent for future runs while OSDM is running.
+  Slots persist before dispatch; overlaps skip, missed startup slots skip unless
+  coalesced catch-up was enabled. Pause/Cancel disables the schedule.
+- Rechecks preserve old files with distinct revision paths and retain lifetime
+  byte charges. Page/file/depth ceilings reset per exploration. Filter changes
+  cannot change origin/path and require finished/canceled prior child transfers;
+  they save paused and disable unattended policy until fresh confirmation.
+- Conditional HTML caching is opt-in, limited to 16 pages/512 KiB, and always
+  ETag-revalidated. No private/no-store, robots or resource-body caching, and no
+  stale-on-error fallback. This is file retrieval, not offline HTML-link rewriting.
 
 ## Acceptance evidence
 

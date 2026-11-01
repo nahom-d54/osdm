@@ -13,7 +13,7 @@ for a bounded subset is not evidence for every bullet in `PLAN.md` §6.4.
 
 ### Media pipeline
 
-- `crates/media-capture` (offline, no network, no filesystem writes):
+- `crates/media-capture` (offline, no network; parsers never write files):
   - bounded HLS master inspection (declared bandwidth, resolution, codecs,
     average bandwidth and frame rate) and complete unencrypted VOD plans with
     media sequence;
@@ -53,8 +53,9 @@ for a bounded subset is not evidence for every bullet in `PLAN.md` §6.4.
   manifest; it shows manifest-declared quality (never measured or invented),
   requires explicit origin approval, exposes output folder/name, description and
   category, lists saved jobs with engine-authoritative progress, and offers
-  Pause/Resume/Cancel. Direct-file subtitle attachment is refused with an
-  explanation instead of silently degrading.
+  Pause/Resume/Cancel. Direct MP4/M4V/MOV sources can attach explicitly selected
+  subtitles through the same verified remux pipeline. Merged output supports MP4
+  or Matroska; unsupported direct remux formats fail explicitly.
 - Browser workflow: an explicit popup scan of the active page, a single chosen
   media item (optional player subtitle), persisted global/exact-site disable, and
   an authenticated native `offer_media` handoff. Nothing downloads automatically,
@@ -87,10 +88,23 @@ for a bounded subset is not evidence for every bullet in `PLAN.md` §6.4.
   and budgets → review resources) with saved-project open/resume/cancel/delete
   and explicit review before queueing. Deleting a project keeps downloaded files
   and download entries.
+- Saved-project policy supports explicitly confirmed automatic matching downloads,
+  per-project concurrency (1–32, subordinate to global/host ceilings), UTC one-shot
+  or periodic exploration, and opt-in coalesced startup catch-up. Schedule slots
+  are consumed durably before dispatch; overlaps skip rather than stack. Pause or
+  Cancel disables scheduling. The app must be running; no OS wake task is installed.
+- Rechecks and confirmed filter edits retain previous downloads and lifetime byte
+  charges. New revisions use distinct filenames and revision-specific review IDs;
+  they never replace existing files. Filter edits preserve origin/path scope, save
+  paused, and disable scheduling and automatic downloads pending fresh consent.
+- Optional conditional HTML caching retains at most 16 pages/512 KiB, always
+  revalidates with ETag, excludes private/no-store responses, and never caches
+  robots or resource bodies or falls back to stale content on errors. Resource
+  descriptions come from bounded plain link/player text.
 
 ## Supported subset and explicit limits
 
-- HLS capture is **standalone unencrypted MPEG-TS VOD merged into Matroska**.
+- HLS capture is **standalone unencrypted MPEG-TS VOD merged into MP4 or Matroska**.
   Live/event playlists, encryption/DRM, byte ranges, initialization maps,
   discontinuities and external audio/subtitle renditions are rejected.
 - DASH capture supports **one static period with explicit `SegmentList`** and
@@ -101,13 +115,16 @@ for a bounded subset is not evidence for every bullet in `PLAN.md` §6.4.
   rendition discovery.
 - No site adapters or headless browser, no forms/login, no JavaScript-heavy
   capture, no automatic site-wide capture.
-- Site Grabber has no scheduled/periodic exploration, no response cache and no
-  filter-editing continuation of an existing project; those remain open.
+- Automatic mirroring saves matching known-size files as separate revisions; it
+  does not rewrite HTML links into an offline website or replace unchanged files.
+  Page/file/depth ceilings apply per exploration; byte accounting spans revisions.
 - Media jobs have no removal/cleanup API; workspaces and artifact identity anchors
   are retained.
-- FFmpeg is a trusted, explicitly configured local executable. Its output and CPU
-  are not OS-sandboxed, and merge artifacts are retained rather than deleted by a
-  cleanup command.
+- FFmpeg is a trusted, explicitly configured local executable, not OS-sandboxed.
+  At most two engine media-processing stages run concurrently (also bounded by
+  global active-download configuration). Remux has a one-hour deadline, a sampled
+  output-size guard and a per-allocation cap; these are not hard OS memory/CPU/disk
+  quotas. Merge artifacts remain retained without a cleanup command.
 - Job and merged-file SHA-256 is locally computed, not publisher-authenticated.
 
 ## Acceptance evidence
@@ -129,8 +146,8 @@ pnpm exec playwright test
 Recorded 2026-11-01 on Windows with the locally installed
 `C:/apps/ffmpeg/bin/{ffmpeg,ffprobe}.exe`:
 
-- `cargo test --workspace`: **206 passed, 3 ignored** (the opt-in multi-gigabyte
-  transfer test and two opt-in codec tests).
+- `cargo test --workspace`: **218 passed, 3 ignored** (one opt-in multi-gigabyte
+  transfer and two opt-in remux tests; both remux tests also passed explicitly).
 - Opt-in remux suite (`--test remux -- --ignored`): **2 passed** using real
   FFmpeg/ffprobe — generated MPEG-TS to Matroska with subtitle extraction and
   language metadata, and fragmented MP4 with separate A/V plus WebVTT.
@@ -138,6 +155,8 @@ Recorded 2026-11-01 on Windows with the locally installed
   a real FFmpeg-generated static DASH asset set downloaded through the engine and
   merged from explicitly selected `SegmentList` tracks; both verify exact output
   hash, racing-output preservation and no-overwrite publication.
+- Expanded media integration suite: **13 passed** with installed FFmpeg, including
+  direct MP4 plus WebVTT remux, exact-output hash and ffprobe subtitle verification.
 - Site integration tests cover robots → HTML → metadata → review → hard-capped
   download, changed length, existing destination, real page/robots caps,
   pause/restart replay, shutdown drain, unconfirmed no-network creation,
@@ -145,10 +164,14 @@ Recorded 2026-11-01 on Windows with the locally installed
   selected payload with a matching validator.
 - `cargo clippy --workspace --all-targets -- -D warnings`: **pass**.
 - `cargo fmt --all -- --check` and `git diff --check`: **pass**.
-- `pnpm typecheck`: **pass**; `pnpm test`: **14 passed**;
+- `pnpm typecheck`: **pass**; `pnpm test`: **15 passed**;
   `pnpm test:extension`: **25 passed**; `pnpm build`: **pass** (existing
-  large-chunk advisory only); `pnpm exec playwright test`: **32 passed** including
+  large-chunk advisory only); `pnpm exec playwright test`: **37 passed** including
   the new media/site focus, mobile-width, fake-IPC and light/dark axe checks.
+- Nine Site Grabber automation integration tests cover durable/coalesced UTC
+  decisions, startup behavior, command-only ownership, explicit automatic
+  admission, concurrency ceilings, filter continuation, separate revisions,
+  lifetime accounting, conditional/no-store caching and schema-8 migration rollback.
 
 ### Not verified
 

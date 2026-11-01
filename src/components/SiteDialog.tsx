@@ -8,11 +8,14 @@ import { formatBytes } from "@/lib/format";
 import { mediaSource } from "@/lib/retrieval";
 import { scopeFor, siteLimits, type SiteProject, type SiteAction } from "@/lib/site-retrieval";
 import { useSettings } from "@/store/settings";
+import { SitePolicyEditor } from "@/components/SitePolicyEditor";
+import { useEngine } from "@/store/engine";
 
 const STEPS = ["Source", "Scope", "Filters & budgets", "Review resources"];
 
 export function SiteDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const defaultDirectory = useSettings((state) => state.settings.default_directory);
+  const downloads = useEngine((state) => state.downloads);
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
   const [seed, setSeed] = useState("");
@@ -31,10 +34,13 @@ export function SiteDialog({ open, onClose }: { open: boolean; onClose: () => vo
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
+  const [policyOpen, setPolicyOpen] = useState(false);
   const generation = useRef(0);
   const admitting = useRef(false);
   const content = useRef<HTMLDivElement>(null);
+  const policyButton = useRef<HTMLButtonElement>(null);
   const project = projects.find((value) => value.id === projectId);
+  useEffect(() => { setSelected([]); }, [projectId, project?.generation]);
 
   useEffect(() => {
     if (!open) return;
@@ -47,6 +53,7 @@ export function SiteDialog({ open, onClose }: { open: boolean; onClose: () => vo
     let disposed = false;
     let pending = false;
     setError(null); setNotice("");
+    setPolicyOpen(false);
     setDestination((value) => value || defaultDirectory);
     const refresh = async () => {
       if (pending) return;
@@ -84,8 +91,8 @@ export function SiteDialog({ open, onClose }: { open: boolean; onClose: () => vo
       const limits = siteLimits({ pages, files, mebibytes, depth });
       if (!confirmed) throw new Error("Confirm this site's scope and budgets before exploring.");
       const id = await getBridge().createSiteProject({ name: name.trim(), seed_url: mediaSource(seed.trim()), path_prefix: prefix, destination, extensions: extensions.split(/\s+/).filter(Boolean), excluded_paths: excludes.split(/\r?\n/).filter(Boolean), ...limits, confirmed });
-      // Creation is durable but paused. Closing while it waits must not start a
-      // later, invisible crawl; the user can open/resume the saved project.
+      // Save project & explore is explicit admission. A saved exploration keeps
+      // running when its dialog closes, until its Pause/Cancel control is used.
       if (current !== generation.current) return;
       setProjectId(id); setSelected([]); setStep(3);
       await getBridge().controlSiteProject(id, "resume");
@@ -119,7 +126,7 @@ export function SiteDialog({ open, onClose }: { open: boolean; onClose: () => vo
     {step > 0 && step < 3 && <Button variant="secondary" disabled={busy} onClick={() => setStep(step - 1)}>Back</Button>}
     {step < 2 && <Button onClick={next}>Continue</Button>}
     {step === 2 && <Button disabled={busy || !confirmed} onClick={() => void explore()}>Save project & explore</Button>}
-    {step === 3 && <Button disabled={busy || selected.length === 0} onClick={() => void queue()}>Queue {selected.length || "selected"} resources</Button>}
+    {step === 3 && <Button disabled={busy || selected.length === 0 || project?.state !== 'Ready'} onClick={() => void queue()}>Queue {selected.length || "selected"} resources</Button>}
   </>}><div ref={content} tabIndex={-1} className="space-y-5">
     <ol className="grid grid-cols-4 gap-2 border-b border-line pb-4 text-[10px]">{STEPS.map((label, index) => <li key={label} aria-current={step === index ? "step" : undefined} className={step === index ? "font-medium text-brand" : "text-muted-foreground"}><span className="mb-1 block font-mono">{index + 1}/4</span>{label}</li>)}</ol>
     {step === 0 && <>
@@ -144,8 +151,14 @@ export function SiteDialog({ open, onClose }: { open: boolean; onClose: () => vo
     {step === 3 && project && <>
       <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-medium">{project.name}</h3><p className="mt-1 font-mono text-xs text-muted-foreground">{project.state} · {project.pages} pages · {formatBytes(project.bytes)} accounted</p></div><div className="flex gap-2"><Button size="sm" variant="outline" disabled={busy} onClick={() => void control(project.state === 'Exploring' ? 'pause' : 'resume')}>{project.state === 'Exploring' ? 'Pause exploration' : 'Resume exploration'}</Button><Button size="sm" variant="ghost" disabled={busy} onClick={() => void control('cancel')}>Cancel</Button></div></div>
       {project.error && <ErrorNote>{project.error}</ErrorNote>}
-      {project.resources.length === 0 ? <p className="text-sm text-muted-foreground">No matching resources discovered yet. Resume exploration, or use a new project with different filters if the site is outside this scope.</p> : <fieldset className="rounded-md border border-line"><legend className="px-2 text-sm">Review resources · unknown sizes cannot be queued</legend><div className="max-h-72 divide-y divide-line-soft overflow-auto">{project.resources.map((resource) => <label key={resource.id} className="flex items-start gap-3 p-3 text-sm"><input type="checkbox" className="mt-1" disabled={resource.size == null || resource.download_id != null} checked={selected.includes(resource.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, resource.id] : current.filter((id) => id !== resource.id))} /><span className="min-w-0 flex-1"><span className="block break-all">{resource.relative_path}</span><span className="text-xs text-muted-foreground">{resource.download_id ? "Already queued" : resource.size == null ? "Size unknown · not queued" : formatBytes(resource.size)}</span></span></label>)}</div></fieldset>}
-      <div className="flex flex-wrap justify-between gap-2 border-t border-line pt-3"><Button size="sm" variant="secondary" onClick={() => { setStep(0); setProjectId(null); setConfirmed(false); }}>New project</Button><Button size="sm" variant="ghost" disabled={busy || project.state === 'Exploring'} onClick={() => void control('delete')}>Delete saved project · keep files</Button></div>
+      {project.resources.length === 0 ? <p className="text-sm text-muted-foreground">No matching resources discovered yet. Resume exploration or use the filter editor to continue within this scope.</p> : <fieldset className="rounded-md border border-line"><legend className="px-2 text-sm">Review resources · unknown sizes cannot be queued</legend><div className="max-h-72 divide-y divide-line-soft overflow-auto">{project.resources.map((resource) => {
+        const admitted = resource.download_id != null && downloads.some((download) => download.id === resource.download_id);
+        return <label key={resource.id} className="flex items-start gap-3 p-3 text-sm"><input type="checkbox" className="mt-1" disabled={resource.size == null || admitted || project.state !== 'Ready'} checked={selected.includes(resource.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, resource.id] : current.filter((id) => id !== resource.id))} /><span className="min-w-0 flex-1"><span className="block break-all">{resource.description || resource.relative_path}</span>{resource.description && <span className="block break-all font-mono text-[10px] text-muted-foreground">{resource.relative_path}</span>}<span className="text-xs text-muted-foreground">{admitted ? "Already queued" : resource.download_id ? "Admission pending · select to retry" : resource.size == null ? "Size unknown · not queued" : formatBytes(resource.size)}</span></span></label>;
+      })}</div></fieldset>}
+      <div className="space-y-2 text-xs text-muted-foreground"><p>Revision {project.generation ?? 0} · {project.policy?.automatic_downloads ? 'Automatic matching downloads enabled' : 'Manual review'} · Up to {project.policy?.max_concurrent_downloads ?? 1} active resource downloads</p>{project.policy?.next_run != null && <p>Next recheck · {new Date(project.policy.next_run * 1000).toISOString().replace('T', ' ').replace('.000Z', ' UTC')}</p>}{project.schedule_note && <p role="status">{project.schedule_note}</p>}<p>Rechecks keep previous copies and count new revisions against the same lifetime payload budget.</p></div>
+      <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={busy || project.state === 'Exploring'} onClick={() => void control('recheck')}>Recheck now</Button><Button ref={policyButton} size="sm" variant="outline" disabled={busy} onClick={() => setPolicyOpen((value) => !value)}>Schedule, automation & filters</Button></div>
+      {policyOpen && <SitePolicyEditor key={project.id} project={project} onClose={() => { setPolicyOpen(false); policyButton.current?.focus(); }} onSaved={async () => { setProjects(await getBridge().siteProjects()); setNotice('Project policy saved. Existing files are kept.'); }} />}
+      <div className="flex flex-wrap justify-between gap-2 border-t border-line pt-3"><Button size="sm" variant="secondary" onClick={() => { setStep(0); setProjectId(null); setConfirmed(false); setPolicyOpen(false); }}>New project</Button><Button size="sm" variant="ghost" disabled={busy || project.state === 'Exploring'} onClick={() => void control('delete')}>Delete saved project · keep files</Button></div>
     </>}
     {step === 3 && !project && <p className="text-sm text-muted-foreground">Loading the saved project…</p>}
     {error && <ErrorNote>{error}</ErrorNote>}{notice && <p role="status" className="text-sm text-ok">{notice}</p>}

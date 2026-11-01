@@ -21,7 +21,7 @@ impl Store {
         let version: i64 = sqlx::query_scalar("PRAGMA user_version")
             .fetch_one(&pool)
             .await?;
-        if !(0..=7).contains(&version) {
+        if !(0..=8).contains(&version) {
             return Err(crate::Error::Invalid(
                 "database was created by a newer engine version".into(),
             ));
@@ -44,7 +44,24 @@ impl Store {
         )
         .execute(&mut *tx)
         .await?;
-        sqlx::query("PRAGMA user_version = 7")
+        // A revision-7 binary must not ignore unattended project policy or reset
+        // revision/cache/lifetime accounting. Marker and version migrate atomically.
+        sqlx::query("CREATE TABLE IF NOT EXISTS site_policy_version (id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL)").execute(&mut *tx).await?;
+        sqlx::query(
+            "INSERT INTO site_policy_version(id,version) VALUES(1,1) ON CONFLICT(id) DO NOTHING",
+        )
+        .execute(&mut *tx)
+        .await?;
+        let policy_version: i64 =
+            sqlx::query_scalar("SELECT version FROM site_policy_version WHERE id=1")
+                .fetch_one(&mut *tx)
+                .await?;
+        if policy_version != 1 {
+            return Err(crate::Error::Invalid(
+                "unsupported site policy schema".into(),
+            ));
+        }
+        sqlx::query("PRAGMA user_version = 8")
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;

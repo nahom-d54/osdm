@@ -91,6 +91,8 @@ export class MockBridge implements EngineBridge {
   async siteProjects(): Promise<import("@/lib/site-retrieval").SiteProject[]> { return []; }
   async controlSiteProject(_id: string, _action: import("@/lib/site-retrieval").SiteAction): Promise<void> { throw new BridgeError("Site projects require the desktop app."); }
   async queueSiteResources(_id: string, _resources: string[]): Promise<string[]> { throw new BridgeError("Site projects require the desktop app."); }
+  async configureSitePolicy(_id: string, _policy: import("@/lib/site-retrieval").SitePolicy, _confirmed: boolean): Promise<void> { throw new BridgeError("Site automation requires the desktop app."); }
+  async updateSiteFilters(_id: string, _extensions: string[], _excludedPaths: string[], _confirmed: boolean): Promise<void> { throw new BridgeError("Site filter updates require the desktop app."); }
   readonly kind = "mock" as const;
   private entries: Entry[] = [];
   private automationState: import("@/lib/types").Automation = { queues: [], schedules: [], membership: {} };

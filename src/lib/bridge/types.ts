@@ -50,6 +50,8 @@ export interface EngineBridge {
   siteProjects(): Promise<import("@/lib/site-retrieval").SiteProject[]>;
   controlSiteProject(id: string, action: import("@/lib/site-retrieval").SiteAction): Promise<void>;
   queueSiteResources(id: string, resources: string[]): Promise<string[]>;
+  configureSitePolicy(id: string, policy: import("@/lib/site-retrieval").SitePolicy, confirmed: boolean): Promise<void>;
+  updateSiteFilters(id: string, extensions: string[], excludedPaths: string[], confirmed: boolean): Promise<void>;
   pause(id: string): Promise<void>;
   resume(id: string): Promise<void>;
   retry(id: string): Promise<void>;

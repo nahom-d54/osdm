@@ -558,9 +558,10 @@ Features:
 
 **Status (2026-11-01):** implemented in source for a bounded subset. Explicit
 browser/desktop selection, engine-budgeted HLS and static-DASH inspection, durable
-MPEG-TS HLS→Matroska jobs with exact-output hashing and no-overwrite publication,
-optional validated SRT/WebVTT, and per-site disable are tested, including a real
-installed-FFmpeg merges, including static fragmented-MP4 DASH jobs. Still open:
+MPEG-TS HLS and static fragmented-MP4 DASH jobs with MP4/Matroska output,
+exact-output hashing and no-overwrite publication, optional validated SRT/WebVTT,
+direct MP4 subtitle remux and per-site disable are tested with installed FFmpeg.
+Still open:
 live/DRM capture, automatic rendition discovery, and manual production-stream
 playback review. See
 [P3 scope and limits](docs/p3-retrieval.md).
@@ -589,9 +590,12 @@ Features:
 **Depends on:** scheduling and queues (P2).
 
 **Status (2026-11-01):** the exit gate above is implemented and tested in source
-for explicit same-origin, path-scoped projects respecting robots policy. Still
-open: scheduled/periodic exploration, response caching, and continuation with
-changed filters. Scope and policy are in
+for explicit same-origin, path-scoped projects respecting robots policy. Confirmed
+automatic retrieval, durable UTC schedules, periodic revision retrieval, bounded
+conditional HTML caching, per-project concurrency, resource descriptions and
+changed-filter continuation are implemented. Revisions retain old files; this is
+not HTML-link rewriting or in-place synchronization. Project templates and live
+native/browser validation remain open. Scope and policy are in
 [Site Grabber](docs/site-grabber.md); evidence is in
 [P3 retrieval](docs/p3-retrieval.md).
 

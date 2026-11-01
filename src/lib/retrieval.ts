@@ -35,6 +35,7 @@ export interface MediaJobRequest {
   subtitle_url?: string | null;
   category_id?: string | null;
   dash_tracks?: string[];
+  direct_media?: boolean;
 }
 
 export interface MediaJob {

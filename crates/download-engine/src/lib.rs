@@ -26,7 +26,10 @@ pub use media::SitePageResponse;
 pub use media_jobs::{MediaJob, MediaJobId, MediaJobRequest, MediaJobState};
 pub use model::*;
 pub use osdm_media_capture as media_capture;
-pub use site_jobs::{SiteAction, SiteProject, SiteProjectRequest, SiteProjectState, SiteResource};
+pub use site_grabber::Filters as SiteFilters;
+pub use site_jobs::{
+    SiteAction, SitePolicy, SiteProject, SiteProjectRequest, SiteProjectState, SiteResource,
+};
 
 pub type Result<T> = std::result::Result<T, Error>;
 

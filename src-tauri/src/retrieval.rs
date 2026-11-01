@@ -286,6 +286,44 @@ pub(crate) async fn engine_queue_site_resources(
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+pub(crate) async fn engine_configure_site_policy(
+    shell: State<'_, Shell>,
+    id: DownloadId,
+    policy: download_engine::SitePolicy,
+    confirmed: bool,
+) -> Reply<()> {
+    shell
+        .engine()
+        .await?
+        .configure_site_policy(id, policy, confirmed)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub(crate) async fn engine_update_site_filters(
+    shell: State<'_, Shell>,
+    id: DownloadId,
+    extensions: Vec<String>,
+    excluded_paths: Vec<String>,
+    confirmed: bool,
+) -> Reply<()> {
+    shell
+        .engine()
+        .await?
+        .update_site_filters(
+            id,
+            download_engine::SiteFilters {
+                extensions: extensions.into_iter().collect(),
+                excluded_paths,
+            },
+            confirmed,
+        )
+        .await
+        .map_err(|error| error.to_string())
+}
+
 pub(crate) async fn offer(
     app: &tauri::AppHandle,
     url: String,

@@ -29,6 +29,12 @@ All notable changes to OSDM are documented here. This project follows
   credentials, exact final length).
 - Engine schema 7 adds durable media-job and Site Grabber records and rejects
   older binaries rather than bypassing media publication or site guards.
+- Confirmed Site Grabber automation: durable UTC one-shot/periodic rechecks,
+  explicit startup catch-up, per-project download concurrency, filter continuation
+  and bounded ETag-revalidated HTML caching. Revisions preserve previous files and
+  lifetime byte charges; schema 8 prevents older binaries from ignoring policy.
+- MP4/Matroska output selection and direct MP4/M4V/MOV subtitle remux, plus bounded
+  media-processing admission, remux deadline and sampled output-size guards.
 
 ### Planned
 
@@ -36,7 +42,7 @@ All notable changes to OSDM are documented here. This project follows
 - Storage-aware reservations and duplicate detection.
 - Mirror benchmarking and failover.
 - Predictive scheduling and automatic file organization.
-- Live/DRM capture, scheduled Site Grabber runs and response caching.
+- Live/DRM capture, automatic rendition discovery and media-job cleanup.
 
 P3's bounded subset is implemented in source and tested; it is not claimed
 complete against every `PLAN.md` §6.4 bullet. See

@@ -31,6 +31,9 @@ pub struct MediaJobRequest {
     /// Explicit DASH representation choices from `inspect_dash`; empty means HLS.
     #[serde(default)]
     pub dash_tracks: Vec<String>,
+    /// Explicit local-container remux of one direct MP4/MOV file (for subtitles).
+    #[serde(default)]
+    pub direct_media: bool,
 }
 
 impl std::fmt::Debug for MediaJobRequest {
@@ -172,6 +175,17 @@ fn approve(
 }
 
 impl Engine {
+    async fn acquire_media_processor(
+        &self,
+        token: &CancellationToken,
+    ) -> Result<tokio::sync::OwnedSemaphorePermit> {
+        tokio::select! {
+            biased;
+            _ = token.cancelled() => Err(Error::Interrupted),
+            _ = self.inner.media.shutdown.cancelled() => Err(Error::Shutdown),
+            permit = self.inner.media_processing.clone().acquire_owned() => permit.map_err(|_| Error::Shutdown),
+        }
+    }
     /// The caller must first inspect a master and explicitly select a variant.
     /// Never guesses quality or authorizes origins merely because a manifest names them.
     pub async fn create_media_job(&self, request: MediaJobRequest) -> Result<MediaJobId> {
@@ -181,10 +195,13 @@ impl Engine {
         }
         if !request.destination.is_absolute()
             || request.destination.file_name().is_none()
-            || request.destination.extension().and_then(|s| s.to_str()) != Some("mkv")
+            || !matches!(
+                request.destination.extension().and_then(|s| s.to_str()),
+                Some("mkv" | "mp4")
+            )
         {
             return Err(invalid(
-                "media destination must be an absolute .mkv filename",
+                "media destination must be an absolute .mkv or .mp4 filename",
             ));
         }
         if !request.ffmpeg_path.is_absolute() {
@@ -222,7 +239,27 @@ impl Engine {
             origins.insert(allowed.clone());
         }
         let cancellation = CancellationToken::new();
-        let tracks = if request.dash_tracks.is_empty() {
+        let tracks = if request.direct_media {
+            if !request.dash_tracks.is_empty() {
+                return Err(invalid("direct media cannot select DASH representations"));
+            }
+            let url = reqwest::Url::parse(source.as_str())
+                .map_err(|_| invalid("invalid direct media URL"))?;
+            let extension = Path::new(url.path())
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if !matches!(extension.as_str(), "mp4" | "m4v" | "mov") {
+                return Err(invalid(
+                    "direct subtitle remux supports MP4/M4V/MOV; other direct files can be saved without remux",
+                ));
+            }
+            vec![SavedTrack {
+                sources: vec![source.as_str().to_owned()],
+                container: TrackContainer::FragmentedMp4,
+            }]
+        } else if request.dash_tracks.is_empty() {
             let segments = match self
                 .inspect_hls(source.as_str(), &request.allowed_origins, &cancellation)
                 .await?
@@ -651,13 +688,18 @@ impl Engine {
         check_cancel(self, token)?;
         owned_directory(&job).await?;
         self.verify_media_inputs(&job, token).await?;
+        // Remux and full-decode stages have a separate small resource budget.
+        // Waiting never bypasses pause/cancel/shutdown or occupies a connection.
+        let _processing = self.acquire_media_processor(token).await?;
         let attempt = uuid::Uuid::new_v4();
-        let artifact = job
-            .view
-            .destination
-            .parent()
-            .unwrap()
-            .join(format!(".osdm-media-{id}-{attempt}.part.mkv"));
+        let artifact = job.view.destination.parent().unwrap().join(format!(
+            ".osdm-media-{id}-{attempt}.part.{}",
+            job.view
+                .destination
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .ok_or_else(|| invalid("invalid output container"))?
+        ));
         {
             let mut data = self.inner.data.lock().await;
             check_cancel(self, token)?;
@@ -734,7 +776,17 @@ impl Engine {
         let plan = crate::media_capture::MergePlan {
             tracks,
             subtitles,
-            output: crate::media_capture::OutputContainer::Matroska,
+            output: if job
+                .view
+                .destination
+                .extension()
+                .and_then(|extension| extension.to_str())
+                == Some("mp4")
+            {
+                crate::media_capture::OutputContainer::Mp4
+            } else {
+                crate::media_capture::OutputContainer::Matroska
+            },
             max_input_bytes: input_bytes,
         };
         let processing = token.child_token();
@@ -951,6 +1003,13 @@ fn validate_layout(job: &SavedJob) -> Result<()> {
         .ok_or_else(|| invalid("invalid media layout"))?;
     let total = job.total_sources();
     if !parent.is_absolute()
+        || !matches!(
+            job.view
+                .destination
+                .extension()
+                .and_then(|extension| extension.to_str()),
+            Some("mkv" | "mp4")
+        )
         || job.directory != parent.join(format!(".osdm-media-{}", job.view.id))
         || job.tracks.is_empty()
         || job.tracks.len() > 2
@@ -965,10 +1024,15 @@ fn validate_layout(job: &SavedJob) -> Result<()> {
     if let Some(path) = &job.artifact {
         let prefix = format!(".osdm-media-{}-", job.view.id);
         if path.parent() != Some(parent)
-            || !path
-                .file_name()
-                .and_then(|s| s.to_str())
-                .is_some_and(|s| s.starts_with(&prefix) && s.ends_with(".part.mkv"))
+            || !path.file_name().and_then(|s| s.to_str()).is_some_and(|s| {
+                s.starts_with(&prefix)
+                    && job
+                        .view
+                        .destination
+                        .extension()
+                        .and_then(|extension| extension.to_str())
+                        .is_some_and(|extension| s.ends_with(&format!(".part.{extension}")))
+            })
         {
             return Err(invalid("invalid media artifact ownership record"));
         }
@@ -1212,9 +1276,33 @@ mod tests {
             category_id: None,
             subtitle_url: Some("https://source.invalid/private-subtitle?token=secret".into()),
             dash_tracks: vec!["video-representation".into()],
+            direct_media: false,
         };
         let debug = format!("{request:?}");
         assert!(!debug.contains("source.invalid"));
         assert!(!debug.contains("secret"));
+    }
+
+    #[tokio::test]
+    async fn media_processing_admission_is_bounded_and_cancellable() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Engine::open(dir.path().join("processing.db"), crate::Config::default())
+            .await
+            .unwrap();
+        let token = CancellationToken::new();
+        let first = engine.acquire_media_processor(&token).await.unwrap();
+        let second = engine.acquire_media_processor(&token).await.unwrap();
+        let waiting = engine.acquire_media_processor(&token);
+        tokio::pin!(waiting);
+        tokio::select! {
+            biased;
+            _ = &mut waiting => panic!("processing must respect its two-stage ceiling"),
+            _ = tokio::task::yield_now() => {}
+        }
+        token.cancel();
+        assert!(matches!(waiting.await, Err(Error::Interrupted)));
+        drop(first);
+        drop(second);
+        engine.shutdown().await.unwrap();
     }
 }

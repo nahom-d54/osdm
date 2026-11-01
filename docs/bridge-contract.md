@@ -64,15 +64,17 @@ camelCase; nested Rust structs retain snake_case. Errors reject with a string.
 | `engine_probe` | `url: string` | `ProbeInfo` |
 | `engine_inspect_media` | `url: string, allowedOrigins: string[], requestId: UUID, format?: "hls" \| "dash"` | `{kind, choices, segment_count, resource_origins}` |
 | `engine_cancel_inspection` | `requestId: UUID` | `()` |
-| `engine_create_media_job` | `request: {url, destination, allowed_origins, ffmpeg_path, description, subtitle_url?, category_id?, dash_tracks?}` | media job UUID |
+| `engine_create_media_job` | `request: {url, destination, allowed_origins, ffmpeg_path, description, subtitle_url?, category_id?, dash_tracks?, direct_media?}` | media job UUID |
 | `engine_media_jobs` | — | engine media job snapshots |
 | `engine_control_media_job` | `id: UUID, action: "pause" \| "resume" \| "cancel"` | `()` |
 | `media_offers` | — | session-only `{id, url, title, subtitle_url, kind}[]` |
 | `media_dismiss_offer` | `id: UUID` | `()` |
 | `engine_create_site_project` | `request: SiteProjectRequest` | project UUID |
 | `engine_site_projects` | — | `SiteProject[]` |
-| `engine_control_site_project` | `id: UUID, action: "pause" \| "resume" \| "cancel" \| "delete"` | `()` |
+| `engine_control_site_project` | `id: UUID, action: "pause" \| "resume" \| "cancel" \| "delete" \| "recheck"` | `()` |
 | `engine_queue_site_resources` | `id: UUID, resources: string[]` | child download UUIDs |
+| `engine_configure_site_policy` | `id: UUID, policy: SitePolicy, confirmed: boolean` | `()` |
+| `engine_update_site_filters` | `id: UUID, extensions: string[], excludedPaths: string[], confirmed: boolean` | `()` |
 | `engine_pause`, `engine_resume`, `engine_retry`, `engine_cancel` | `id: string` | `()` |
 | `engine_update_url` | `id: string, url: string` | `()` |
 | `engine_reorder` | `ids: string[]` | `()` |
@@ -159,7 +161,7 @@ master playlist to `engine_create_media_job` is rejected, as is any segment,
 subtitle or redirect origin that was not explicitly approved.
 
 Media jobs support standalone unencrypted MPEG-TS HLS VOD and static fragmented-
-MP4 DASH `SegmentList` tracks merged into Matroska, with optional validated
+MP4 DASH `SegmentList` tracks merged into MP4 or Matroska, with optional validated
 SRT/WebVTT embedding. DASH requires at least one explicitly selected
 `dash_tracks` key (video and/or audio); its initialization segment is kept first.
 Live, event, encrypted/DRM, byte-range, HLS initialization-map, DASH
@@ -433,6 +435,11 @@ publication or site byte/scope guards. A site child persists `max_bytes` and
 skips synchronization, and requires an exact final length. Back up application
 data before downgrading binaries.
 
+Schema **8** transactionally adds a site-policy format marker and prevents older
+binaries from ignoring unattended policy, revisions, caches or lifetime charges.
+Legacy project fields default to manual review with no cache or schedule.
+Unknown policy formats and newer database versions are rejected.
+
 ### Site Grabber workflow
 
 `engine_create_site_project` persists an explicit, confirmed project (one origin,
@@ -441,7 +448,8 @@ paused intent. Resume fetches the origin's robots policy first and explores with
 one engine-budgeted request at a time; redirects are validated before the next
 request, and credentials are never forwarded. `SiteProject.state` moves
 `Paused → Exploring → Ready | Failed | Canceled`. Saved projects open and delete
-without deleting published files; restart never resumes a crawl automatically.
+without deleting published files; restart reopens interrupted work paused, except
+for a separately authorized schedule's explicit catch-up decision.
 
 Discovered files stay review-only and carry `size: null` until an engine-owned
 HEAD returns an exact length; unknown lengths cannot be selected. Queueing a
@@ -450,6 +458,27 @@ download through the normal transfer/checkpoint/publication path. The byte limit
 is a payload/storage budget (discovery bodies plus reserved file payload), not a
 metered WAN retransmission quota, so ordinary resume and retries keep working.
 `engine://snapshot` remains authoritative for child progress.
+
+`SitePolicy` is `{automatic_downloads, max_concurrent_downloads, cache_responses,
+next_run, interval_seconds, catch_up_on_startup}` (snake_case). UTC times are Unix
+seconds; intervals are 60–31,536,000 seconds, concurrency is 1–32. Null `next_run`
+disables the schedule and requires null interval. Schedule slots persist before
+dispatch; overlaps skip, missed startup slots skip unless catch-up is enabled.
+Command-only engine owners never dispatch schedules. Pause/Cancel clears them.
+Automatic downloading applies after exploration, only to known-size matching
+resources that fit the remaining lifetime byte budget.
+
+`SiteProject` adds `policy`, `generation`, `last_run`, `schedule_note`, `extensions`
+and `excluded_paths`; resource entries add bounded plain-text `description`.
+Recheck retains prior files and byte charges, uses distinct revision filenames
+and review IDs, and refuses unfinished child transfers. Filter updates preserve
+origin/path, require confirmation and terminal child transfers, save paused, and
+disable automatic downloads/scheduling. Conditional HTML cache is always
+revalidated, bounded to 16 pages/512 KiB and never serves stale-on-error content.
+
+Media `direct_media` defaults false. True selects a single direct MP4/M4V/MOV
+source for local subtitle remux, without DASH selections. Merged destinations
+accept `.mkv` or `.mp4`; all modes retain verified no-overwrite publication.
 
 `Engine::prepare_capture` atomically inserts a paused download with a 30-second
 lease. Ordinary resume/queue start cannot admit that lease. Commit consumes the

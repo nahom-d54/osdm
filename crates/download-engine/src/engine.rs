@@ -102,6 +102,7 @@ pub(crate) struct Inner {
     pub credentials: Mutex<HashMap<DownloadId, (String, BasicCredentials)>>,
     pub captured_headers: Mutex<HashMap<DownloadId, (String, CapturedHeaders)>>,
     pub connections: Arc<Semaphore>,
+    pub media_processing: Arc<Semaphore>,
     pub hosts: Mutex<HashMap<String, Arc<adaptive::Host>>>,
     pub download_hosts: Mutex<HashMap<DownloadId, Arc<adaptive::Host>>>,
     pub cooldowns: retry::Cooldowns,
@@ -296,6 +297,7 @@ impl Engine {
             site,
             database_lock: Mutex::new(Some(lock)),
             connections: Arc::new(Semaphore::new(config.max_connections)),
+            media_processing: Arc::new(Semaphore::new(config.max_active_downloads.min(2))),
             rate: AtomicU64::new(config.bytes_per_second),
             rate_clock: Mutex::new(tokio::time::Instant::now()),
             rate_changed: tokio::sync::Notify::new(),
@@ -345,6 +347,15 @@ impl Engine {
                         .events
                         .send(EngineEvent::Error(error.to_string()));
                 }
+                if let Err(error) = engine
+                    .site_schedule_tick(crate::automation::unix_now(), startup)
+                    .await
+                {
+                    let _ = engine
+                        .inner
+                        .events
+                        .send(EngineEvent::Error(error.to_string()));
+                }
                 startup = false;
             }
         });
@@ -361,6 +372,9 @@ impl Engine {
                         host.tick(inner.rate.load(Ordering::Relaxed) > 0);
                     }
                 }
+                // Site state is always read before Data, matching site command
+                // admission order and avoiding cross-module lock inversions.
+                let site_limits = inner.site.concurrency_limits().await;
                 let mut data = inner.data.lock().await;
                 if data.stopped {
                     break;
@@ -392,13 +406,33 @@ impl Engine {
                     .config
                     .max_active_downloads
                     .saturating_sub(data.running.len());
-                let ids: Vec<_> = data
-                    .downloads
-                    .iter()
-                    .filter(|d| d.state == DownloadState::Queued)
-                    .take(capacity)
-                    .map(|d| d.id)
+                let mut site_admitted: Vec<_> = site_limits
+                    .into_iter()
+                    .map(|(ids, limit)| {
+                        let active = data.running.keys().filter(|id| ids.contains(id)).count();
+                        (ids, limit.saturating_sub(active))
+                    })
                     .collect();
+                let ids: Vec<_> =
+                    data.downloads
+                        .iter()
+                        .filter(|d| d.state == DownloadState::Queued)
+                        .filter(|download| {
+                            if site_admitted.iter().any(|(ids, remaining)| {
+                                ids.contains(&download.id) && *remaining == 0
+                            }) {
+                                return false;
+                            }
+                            for (ids, remaining) in &mut site_admitted {
+                                if ids.contains(&download.id) {
+                                    *remaining -= 1;
+                                }
+                            }
+                            true
+                        })
+                        .take(capacity)
+                        .map(|d| d.id)
+                        .collect();
                 for id in ids {
                     let download = data.downloads.iter_mut().find(|d| d.id == id).unwrap();
                     download.state = DownloadState::Downloading;

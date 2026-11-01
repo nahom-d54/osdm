@@ -205,9 +205,9 @@ async fn revision_four_migrates_transactionally_and_old_engine_rejects_five() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(version, 7);
+    assert_eq!(version, 8);
     assert!(!(0..=4).contains(&version)); // Previous binary's admission guard.
-    sqlx::query("PRAGMA user_version=8")
+    sqlx::query("PRAGMA user_version=9")
         .execute(&pool)
         .await
         .unwrap();

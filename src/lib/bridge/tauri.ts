@@ -106,6 +106,8 @@ export class TauriBridge implements EngineBridge {
   async siteProjects(): Promise<import("@/lib/site-retrieval").SiteProject[]> { return this.invoke("engine_site_projects"); }
   async controlSiteProject(id: string, action: import("@/lib/site-retrieval").SiteAction): Promise<void> { await this.invoke("engine_control_site_project", { id, action }); }
   async queueSiteResources(id: string, resources: string[]): Promise<string[]> { return this.invoke("engine_queue_site_resources", { id, resources }); }
+  async configureSitePolicy(id: string, policy: import("@/lib/site-retrieval").SitePolicy, confirmed: boolean): Promise<void> { await this.invoke("engine_configure_site_policy", { id, policy, confirmed }); }
+  async updateSiteFilters(id: string, extensions: string[], excludedPaths: string[], confirmed: boolean): Promise<void> { await this.invoke("engine_update_site_filters", { id, extensions, excludedPaths, confirmed }); }
 
   async pause(id: string): Promise<void> {
     await this.invoke("engine_pause", { id });
