@@ -150,6 +150,11 @@ pub struct Download {
     pub temporary_directory: Option<PathBuf>,
     pub state: DownloadState,
     pub total_bytes: Option<u64>,
+    /// Exact selected payload reservation, not cumulative network traffic.
+    #[serde(default)]
+    pub max_bytes: Option<u64>,
+    #[serde(default)]
+    pub deny_redirects: bool,
     pub segments: Vec<Segment>,
     pub error: Option<String>,
     pub bytes_per_second: u64,
@@ -191,6 +196,9 @@ pub struct AdaptiveStatus {
 }
 
 impl Download {
+    pub(crate) fn restricted_site_child(&self) -> bool {
+        self.deny_redirects || self.max_bytes.is_some()
+    }
     pub fn downloaded_bytes(&self) -> u64 {
         self.segments.iter().map(|s| s.downloaded).sum()
     }

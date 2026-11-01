@@ -226,6 +226,11 @@ impl Engine {
             .iter()
             .find(|d| d.id == id)
             .ok_or(Error::NotFound)?;
+        if download.restricted_site_child() {
+            return Err(Error::Invalid(
+                "site children do not accept captured credentials".into(),
+            ));
+        }
         if data.running.contains_key(&id) || download.state != DownloadState::Paused {
             return Err(Error::Invalid(
                 "captured credentials require a paused transfer".into(),
@@ -640,6 +645,7 @@ impl Engine {
             .iter()
             .filter(|d| {
                 data.automation.membership.get(&d.id) == Some(&queue)
+                    && !d.restricted_site_child()
                     && !data.automation.sync_roots.contains_key(&d.id)
             })
             .map(|d| d.id)
@@ -671,6 +677,9 @@ impl Engine {
             .collect();
         drop(data);
         for (root, baseline) in baselines {
+            if baseline.restricted_site_child() {
+                continue;
+            }
             if token.is_cancelled() {
                 return Err(Error::Interrupted);
             }

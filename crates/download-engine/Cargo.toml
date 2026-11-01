@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+site-grabber = { path = "../site-grabber" }
 osdm-media-capture = { path = "../media-capture" }
 futures-util = "0.3"
 httpdate = "1"
@@ -16,7 +17,7 @@ same-file = "1"
 sha2 = "0.10"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
 thiserror = "2"
-tokio = { version = "1", features = ["fs", "io-util", "macros", "rt-multi-thread", "sync", "time", "signal"] }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "rt-multi-thread", "sync", "time", "signal", "process"] }
 tokio-util = "0.7"
 uuid = { version = "1", features = ["v4", "serde"] }
 

@@ -54,7 +54,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
   reacquire the destination host's budget. No credentials or referrer are sent.
   Returned variant/segment URLs are not fetched or implicitly authorized.
   Caller cancellation and engine shutdown drain the operation; idle shutdown
-  refuses active inspection. This is not yet a media download/merge API.
+  refuses active inspection.
+- `inspect_dash(source, allowed_origins, cancellation)` applies the same one-hop
+  budgeted transport to a conservative static DASH MPD, returning every
+  representation with its adaptation/representation identity, initialization,
+  timescale and explicit `SegmentList` segments. `select_dash_tracks` resolves an
+  explicit video/audio choice; nothing is auto-selected or fetched.
+- `create_media_job` implements explicit-quality HLS capture for standalone
+  unencrypted MPEG-TS VOD. Segment children use ordinary admission, checkpointing
+  and retries; the job then remuxes local files through an explicitly configured
+  FFmpeg executable, independently decodes the result, hashes the exact bytes and
+  publishes with the same no-overwrite/recovery rules as ordinary downloads.
+  Optional selected SRT/WebVTT is fetched boundedly from an approved origin and
+  embedded. Jobs reopen paused; `pause/resume/cancel_media_job` are cancellable and
+  drained on shutdown. DASH job downloads, live/DRM and rendition discovery are
+  not implemented.
+- `create_site_project`, `list_site_projects`, `control_site_project` and
+  `queue_site_resources` implement bounded, resumable Site Grabber projects. One
+  engine-budgeted request at a time, robots first, exact origin/path scope,
+  validated redirects, no credentials. Discovered files are review-only until an
+  exact HEAD length exists. A selected child persists `max_bytes` and
+  `deny_redirects` before dispatch, rejects credential/destination/source
+  rewrites, skips synchronization and requires the exact final length. The byte
+  budget covers discovery bodies plus reserved payload, not WAN retransmissions.
 - `reorder` requires every history/queue ID exactly once.
 - `subscribe` provides full snapshots at up to 4 Hz. Refresh using `snapshot` after subscriber lag.
 - Zero bandwidth limit means unlimited; concurrency settings are fixed for an engine's lifetime.
@@ -87,9 +109,8 @@ The database contains full source URLs, including signed query strings. Do not p
 
 - Direct URLs only; explicit session-only Basic auth and origin-scoped captured
   Cookie/Authorization headers are supported. There is no automatic browser-cookie
-  export, persistent custom headers, proxy configuration, or media extraction.
-  Bounded, unauthenticated HLS inspection is available through `inspect_hls`;
-  it does not create durable media jobs or publish media files.
+  export, persistent custom headers, proxy configuration, or automatic media
+  extraction. Media and site retrieval use explicit, unauthenticated sources only.
 - No HTTP response cache: file bodies are streamed to disk once, and durable checkpoints already avoid re-fetching committed ranges.
 - SHA-256 verification needs a trustworthy reference supplied by the user/publisher. Computing a hash alone does not establish authenticity; chunk-level corruption cannot be localized without trusted per-chunk hashes.
 - Partial cleanup is explicit, not automatic. Unrecorded `.part` files are left alone.
@@ -98,11 +119,17 @@ The database contains full source URLs, including signed query strings. Do not p
 - Changing the bandwidth limit wakes existing throttle waits; low-speed transfers remain cancellable.
 - Durable segment layouts remain fixed while request sizes and active connections adapt. Dynamic work stealing is not implemented; instantaneous speed/ETA may fluctuate.
 - Server validators must be truthful. Last-Modified has weaker identity guarantees than strong ETags.
-- Schema revision 5 adds durable queue/schedule/capture decisions; older binaries
-  reject it rather than bypass unattended-work policy. Revision 4 adds organization metadata and custom working-directory ownership;
-  revision 3 added integrity requirements. Revisions 0–3 migrate transactionally with
-  safe defaults (revision 4 also migrates to 5); newer revisions are rejected. Older engines reject revision 5 rather
-  than losing metadata/storage ownership. Downgrading requires a compatible backup.
+- Schema revision 7 adds durable media-job and Site Grabber records plus
+  restrictable child downloads; older binaries reject it rather than bypass media
+  publication or site scope/byte guards. Revision 5 added durable
+  queue/schedule/capture decisions, revision 4 organization metadata and custom
+  working-directory ownership, and revision 3 integrity requirements. Revisions
+  0–6 migrate transactionally; newer revisions are rejected. Downgrading requires
+  a compatible backup.
+- Media jobs keep their workspaces and completed artifact identity anchors; there
+  is no media-job removal/cleanup API yet. Merged SHA-256 is locally computed, not
+  publisher-authenticated. FFmpeg runs as a trusted local executable without an
+  OS-level CPU/memory sandbox, and DASH job downloads are not implemented.
 
 ## Capture and automation
 

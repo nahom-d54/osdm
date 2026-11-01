@@ -21,7 +21,7 @@ impl Store {
         let version: i64 = sqlx::query_scalar("PRAGMA user_version")
             .fetch_one(&pool)
             .await?;
-        if !(0..=5).contains(&version) {
+        if !(0..=7).contains(&version) {
             return Err(crate::Error::Invalid(
                 "database was created by a newer engine version".into(),
             ));
@@ -33,12 +33,64 @@ impl Store {
             .execute(&mut *tx).await?;
         sqlx::query("CREATE TABLE IF NOT EXISTS automation (id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL)")
             .execute(&mut *tx).await?;
-        // Older engines must not bypass queue/schedule decisions.
-        sqlx::query("PRAGMA user_version = 5")
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS media_jobs (id TEXT PRIMARY KEY, payload TEXT NOT NULL)",
+        )
+        .execute(&mut *tx)
+        .await?;
+        // Older engines must not bypass media ownership/publication decisions.
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS site_projects (id TEXT PRIMARY KEY, payload TEXT NOT NULL)",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("PRAGMA user_version = 7")
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
         Ok(Self(pool))
+    }
+
+    pub async fn load_site_projects(&self) -> Result<Vec<crate::site_jobs::SavedSiteProject>> {
+        let rows = sqlx::query("SELECT payload FROM site_projects ORDER BY rowid")
+            .fetch_all(&self.0)
+            .await?;
+        rows.iter()
+            .map(|row| Ok(serde_json::from_str(row.try_get("payload")?)?))
+            .collect()
+    }
+
+    pub async fn save_site_project(
+        &self,
+        project: &crate::site_jobs::SavedSiteProject,
+    ) -> Result<()> {
+        sqlx::query("INSERT INTO site_projects(id,payload) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload")
+            .bind(project.view.id.to_string()).bind(serde_json::to_string(project)?).execute(&self.0).await?;
+        Ok(())
+    }
+
+    pub async fn delete_site_project(&self, id: uuid::Uuid) -> Result<()> {
+        sqlx::query("DELETE FROM site_projects WHERE id=?")
+            .bind(id.to_string())
+            .execute(&self.0)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn load_media_jobs(&self) -> Result<Vec<crate::media_jobs::SavedJob>> {
+        let rows = sqlx::query("SELECT payload FROM media_jobs ORDER BY rowid")
+            .fetch_all(&self.0)
+            .await?;
+        rows.iter()
+            .map(|row| Ok(serde_json::from_str(row.try_get("payload")?)?))
+            .collect()
+    }
+
+    pub async fn save_media_job(&self, job: &crate::media_jobs::SavedJob) -> Result<()> {
+        sqlx::query("INSERT INTO media_jobs(id,payload) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload")
+            .bind(job.view.id.to_string()).bind(serde_json::to_string(job)?)
+            .execute(&self.0).await?;
+        Ok(())
     }
 
     pub async fn load_automation(&self) -> Result<crate::Automation> {

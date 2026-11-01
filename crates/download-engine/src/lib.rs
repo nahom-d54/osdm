@@ -2,11 +2,16 @@
 mod adaptive;
 mod automation;
 mod cleanup;
+mod dash_inspection;
 mod engine;
 mod integrity;
 mod media;
+mod media_jobs;
 mod model;
 mod retry;
+mod site_jobs;
+#[cfg(test)]
+mod site_transfer_tests;
 mod storage;
 mod store;
 #[cfg(debug_assertions)]
@@ -15,9 +20,13 @@ pub mod test_faults;
 mod transfer;
 
 pub use automation::*;
+pub use dash_inspection::{dash_track_key, select_dash_tracks};
 pub use engine::Engine;
+pub use media::SitePageResponse;
+pub use media_jobs::{MediaJob, MediaJobId, MediaJobRequest, MediaJobState};
 pub use model::*;
 pub use osdm_media_capture as media_capture;
+pub use site_jobs::{SiteAction, SiteProject, SiteProjectRequest, SiteProjectState, SiteResource};
 
 pub type Result<T> = std::result::Result<T, Error>;
 

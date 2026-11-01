@@ -136,10 +136,29 @@ async fn probe_once(
     id: Option<DownloadId>,
 ) -> Result<Probe> {
     let _permits = permits(inner, url, token, None, false).await?;
-    let request = inner.request(url, id).await;
+    let exact = {
+        let data = inner.data.lock().await;
+        let download = id.and_then(|id| data.downloads.iter().find(|d| d.id == id));
+        match download.filter(|d| d.restricted_site_child()) {
+            Some(download) => Some(
+                download
+                    .max_bytes
+                    .ok_or_else(|| Error::Invalid("missing site payload reservation".into()))?,
+            ),
+            None => None,
+        }
+    };
+    let request = if exact.is_some() {
+        inner.request_method(url, id, reqwest::Method::HEAD).await
+    } else {
+        inner
+            .request(url, id)
+            .await
+            .header(header::RANGE, "bytes=0-0")
+    };
     let response = tokio::select! {
         _ = token.cancelled() => return Err(Error::Interrupted),
-        response = request.header(header::ACCEPT_ENCODING, "identity").header(header::RANGE, "bytes=0-0").send() => response?,
+        response = request.header(header::ACCEPT_ENCODING, "identity").send() => response?,
     };
     let status = response.status().as_u16();
     if matches!(status, 429 | 503) {
@@ -149,6 +168,26 @@ async fn probe_once(
     let validator = validator(&response);
     let filename = content_disposition_filename(&response);
     let content_type = response_content_type(&response);
+    if let Some(exact) = exact {
+        if status != 200 {
+            return Err(Error::Http(status));
+        }
+        require_identity(&response)?;
+        if declared_length(&response)? != Some(exact) {
+            return Err(Error::Length);
+        }
+        return Ok(Probe {
+            url,
+            length: Some(exact),
+            ranged: response
+                .headers()
+                .get(header::ACCEPT_RANGES)
+                .is_some_and(|v| v == "bytes"),
+            validator,
+            filename,
+            content_type,
+        });
+    }
     if status == 206 {
         let (start, end, total) = content_range(&response).ok_or(Error::Range)?;
         if start != 0 || end != 0 || total == 0 {
@@ -205,6 +244,33 @@ async fn probe_once(
     } else {
         Err(Error::Http(status))
     }
+}
+
+fn require_identity(response: &Response) -> Result<()> {
+    if response
+        .headers()
+        .get_all(header::CONTENT_ENCODING)
+        .iter()
+        .any(|v| v != "identity")
+    {
+        return Err(Error::Invalid(
+            "server returned an encoded representation despite identity encoding".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn declared_length(response: &Response) -> Result<Option<u64>> {
+    response
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .map(|v| {
+            v.to_str()
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .ok_or(Error::Length)
+        })
+        .transpose()
 }
 
 /// Read the server's rate-limit signal from a 429/503 response. Both the delay
@@ -413,6 +479,11 @@ pub(crate) async fn download(
 async fn prepare(inner: &Inner, id: DownloadId, probe: &Probe, force_stream: bool) -> Result<()> {
     let mut data = inner.data.lock().await;
     let download = data.downloads.iter().find(|d| d.id == id).unwrap().clone();
+    if download.restricted_site_child()
+        && (download.max_bytes.is_none() || download.max_bytes != probe.length)
+    {
+        return Err(Error::Length);
+    }
     let metadata = match tokio::fs::metadata(&download.temporary_path).await {
         Ok(value) => Some(value),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
@@ -695,7 +766,11 @@ async fn attempt_segment(
             segment.committed = 0;
         }
         segment.downloaded = segment.committed;
-        download.clone()
+        let download = download.clone();
+        if download.restricted_site_child() && !download.ranged {
+            inner.save(&data, id).await?;
+        }
+        download
     };
     let segment = &download.segments[index];
     if segment.end == Some(segment.start + segment.committed) {
@@ -713,6 +788,12 @@ async fn attempt_segment(
     } else {
         segment.end
     };
+    if download
+        .max_bytes
+        .is_some_and(|cap| offset > cap || request_end.is_none_or(|end| end > cap))
+    {
+        return Err(Error::Length);
+    }
     let mut request = inner
         .request(url, Some(id))
         .await
@@ -740,15 +821,23 @@ async fn attempt_segment(
     if status >= 400 {
         return Err(Error::Http(status));
     }
-    if response
-        .headers()
-        .get(header::CONTENT_ENCODING)
-        .is_some_and(|v| v != "identity")
-    {
-        return Err(Error::Invalid(
-            "server returned an encoded representation despite identity encoding".into(),
-        ));
+    if download.restricted_site_child() {
+        if (download.ranged && status != 206) || (!download.ranged && status != 200) {
+            return Err(Error::Http(status));
+        }
+        let expected = if download.ranged {
+            request_end.unwrap() - offset
+        } else {
+            download.max_bytes.ok_or(Error::Length)?
+        };
+        if declared_length(&response)? != Some(expected) {
+            return Err(Error::Length);
+        }
+        if download.validator.is_some() && validator(&response) != download.validator {
+            return Err(Error::Range);
+        }
     }
+    require_identity(&response)?;
     if download.ranged {
         if status != 206
             || content_range(&response)
@@ -794,7 +883,16 @@ async fn attempt_segment(
                 break;
             }
         };
-        if request_end.is_some_and(|end| segment.start + received + chunk.len() as u64 > end) {
+        let chunk_end = segment
+            .start
+            .checked_add(received)
+            .and_then(|offset| offset.checked_add(chunk.len() as u64));
+        if chunk_end.is_none()
+            || request_end.is_some_and(|end| chunk_end.unwrap() > end)
+            || download
+                .max_bytes
+                .is_some_and(|cap| chunk_end.unwrap() > cap)
+        {
             failure = Some(Error::Length);
             break;
         }
@@ -900,6 +998,13 @@ async fn publish(inner: &Inner, id: DownloadId, token: &CancellationToken) -> Re
         return Err(Error::Interrupted);
     }
     let download = data.downloads.iter_mut().find(|d| d.id == id).unwrap();
+    if download.restricted_site_child()
+        && (download.max_bytes.is_none()
+            || download.max_bytes != Some(download.downloaded_bytes())
+            || download.max_bytes != download.total_bytes)
+    {
+        return Err(Error::Length);
+    }
     if !download.ready_to_publish {
         let bytes = download.downloaded_bytes();
         if download.total_bytes.is_some_and(|n| n != bytes) {

@@ -47,6 +47,7 @@ pub struct Engine {
 }
 
 struct Admission {
+    site: Option<(DownloadId, u64)>,
     properties: DownloadProperties,
     start_paused: bool,
     credentials: Option<BasicCredentials>,
@@ -84,9 +85,12 @@ pub(crate) struct Data {
     pub running: HashMap<DownloadId, CancellationToken>,
     pub synchronizing: HashMap<DownloadId, CancellationToken>,
     pub stopped: bool,
+    pub media_jobs: Vec<crate::media_jobs::SavedJob>,
+    pub media_running: HashMap<DownloadId, CancellationToken>,
 }
 
 pub(crate) struct Inner {
+    pub site: crate::site_jobs::SiteRuntime,
     database_lock: Mutex<Option<std::fs::File>>,
     pub data: Mutex<Data>,
     pub store: Store,
@@ -94,6 +98,7 @@ pub(crate) struct Inner {
     pub schedules_enabled: bool,
     pub client: reqwest::Client,
     pub media: crate::media::Inspector,
+    pub media_children: Mutex<HashSet<DownloadId>>,
     pub credentials: Mutex<HashMap<DownloadId, (String, BasicCredentials)>>,
     pub captured_headers: Mutex<HashMap<DownloadId, (String, CapturedHeaders)>>,
     pub connections: Arc<Semaphore>,
@@ -108,7 +113,34 @@ pub(crate) struct Inner {
 
 impl Inner {
     pub async fn request(&self, url: &str, id: Option<DownloadId>) -> reqwest::RequestBuilder {
-        let mut request = self.client.get(url);
+        self.request_method(url, id, reqwest::Method::GET).await
+    }
+
+    pub async fn request_method(
+        &self,
+        url: &str,
+        id: Option<DownloadId>,
+        method: reqwest::Method,
+    ) -> reqwest::RequestBuilder {
+        let restricted = {
+            let data = self.data.lock().await;
+            id.and_then(|id| data.downloads.iter().find(|d| d.id == id))
+                .is_some_and(|d| d.deny_redirects || d.max_bytes.is_some())
+        };
+        // Media segment redirects fail closed: an ordinary auto-following client
+        // would grant network access to an unapproved manifest/CDN origin.
+        let media_child = {
+            let children = self.media_children.lock().await;
+            id.is_some_and(|id| children.contains(&id))
+        };
+        let mut request = if media_child || restricted {
+            self.media.client.request(method, url)
+        } else {
+            self.client.request(method, url)
+        };
+        if restricted {
+            return request;
+        }
         let headers = self.captured_headers.lock().await;
         if let Some((origin, secret)) = id.and_then(|id| headers.get(&id))
             && reqwest::Url::parse(url)
@@ -216,6 +248,22 @@ impl Engine {
             queue.stop_at = None;
         }
         let mut downloads = store.load().await?;
+        let mut media_jobs = store.load_media_jobs().await?;
+        for job in &mut media_jobs {
+            if !matches!(
+                job.view.state,
+                crate::MediaJobState::Completed | crate::MediaJobState::Canceled
+            ) {
+                job.view.state = crate::MediaJobState::Paused;
+                job.view.error = None;
+            }
+            store.save_media_job(job).await?;
+        }
+        let media_children = downloads
+            .iter()
+            .filter(|download| media_jobs.iter().any(|job| job.owns_child(download)))
+            .map(|download| download.id)
+            .collect();
         for (position, download) in downloads.iter_mut().enumerate() {
             if matches!(
                 download.state,
@@ -243,7 +291,9 @@ impl Engine {
             .user_agent("OSDM/0.1")
             .build()?;
         let (events, _) = broadcast::channel(16);
+        let site = crate::site_jobs::SiteRuntime::load(&store).await?;
         let inner = Arc::new(Inner {
+            site,
             database_lock: Mutex::new(Some(lock)),
             connections: Arc::new(Semaphore::new(config.max_connections)),
             rate: AtomicU64::new(config.bytes_per_second),
@@ -258,12 +308,15 @@ impl Engine {
                 running: HashMap::new(),
                 synchronizing: HashMap::new(),
                 stopped: false,
+                media_jobs,
+                media_running: HashMap::new(),
             }),
             store,
             config,
             schedules_enabled,
             client,
             media: crate::media::Inspector::new()?,
+            media_children: Mutex::new(media_children),
             credentials: Mutex::new(HashMap::new()),
             captured_headers: Mutex::new(HashMap::new()),
             events,
@@ -408,6 +461,27 @@ impl Engine {
             .await
     }
 
+    pub(crate) async fn enqueue_site_child(
+        &self,
+        id: DownloadId,
+        request: DownloadRequest,
+        exact_bytes: u64,
+    ) -> Result<DownloadId> {
+        self.admit(
+            request,
+            Admission {
+                site: Some((id, exact_bytes)),
+                properties: DownloadProperties::default(),
+                start_paused: false,
+                credentials: None,
+                temporary_directory: None,
+                capture: false,
+                sync: None,
+            },
+        )
+        .await
+    }
+
     pub async fn enqueue_with_properties(
         &self,
         request: DownloadRequest,
@@ -419,6 +493,7 @@ impl Engine {
         self.admit(
             request,
             Admission {
+                site: None,
                 properties,
                 start_paused,
                 credentials,
@@ -434,6 +509,7 @@ impl Engine {
         self.admit(
             request,
             Admission {
+                site: None,
                 properties: DownloadProperties::default(),
                 start_paused: true,
                 credentials: None,
@@ -456,6 +532,7 @@ impl Engine {
         self.admit(
             request,
             Admission {
+                site: None,
                 properties,
                 start_paused: false,
                 credentials: None,
@@ -469,6 +546,7 @@ impl Engine {
 
     async fn admit(&self, request: DownloadRequest, admission: Admission) -> Result<DownloadId> {
         let Admission {
+            site,
             properties,
             start_paused,
             credentials,
@@ -488,6 +566,26 @@ impl Engine {
         let parent = request.destination.parent().unwrap();
         let parent = tokio::fs::canonicalize(parent).await?;
         let destination = parent.join(request.destination.file_name().unwrap());
+        if let Some((id, exact)) = site {
+            let data = self.inner.data.lock().await;
+            if data.stopped {
+                return Err(Error::Shutdown);
+            }
+            if let Some(existing) = data.downloads.iter().find(|d| d.id == id) {
+                if existing.url == url.as_str()
+                    && same_destination(&existing.destination, &destination)
+                    && existing.max_bytes == Some(exact)
+                    && existing.deny_redirects
+                    && existing.expected_sha256 == expected_sha256
+                    && existing.temporary_directory.is_none()
+                {
+                    return Ok(id);
+                }
+                return Err(Error::Invalid(
+                    "site child identity or payload policy conflicts".into(),
+                ));
+            }
+        }
         let temporary_directory = match temporary_directory {
             Some(directory) => Some(storage::validate_directory(directory, &parent).await?),
             None => None,
@@ -499,6 +597,23 @@ impl Engine {
         if data.stopped {
             return Err(Error::Shutdown);
         }
+        // Recheck stable-id admission under the insertion lock after filesystem waits.
+        if let Some((id, exact)) = site
+            && let Some(existing) = data.downloads.iter().find(|d| d.id == id)
+        {
+            if existing.url == url.as_str()
+                && same_destination(&existing.destination, &destination)
+                && existing.max_bytes == Some(exact)
+                && existing.deny_redirects
+                && existing.expected_sha256 == expected_sha256
+                && existing.temporary_directory.is_none()
+            {
+                return Ok(id);
+            }
+            return Err(Error::Invalid(
+                "site child identity or payload policy conflicts".into(),
+            ));
+        }
         if data.downloads.iter().any(|d| {
             same_destination(&d.destination, &destination) && d.state != DownloadState::Completed
         }) {
@@ -506,7 +621,16 @@ impl Engine {
                 "destination is already reserved by a download".into(),
             ));
         }
-        let id = DownloadId::new_v4();
+        if data
+            .media_jobs
+            .iter()
+            .any(|job| same_destination(&job.view.destination, &destination))
+        {
+            return Err(Error::Invalid(
+                "destination is reserved by a media job".into(),
+            ));
+        }
+        let id = site.map_or_else(DownloadId::new_v4, |(id, _)| id);
         let download = Download {
             id,
             url: url.to_string(),
@@ -523,6 +647,8 @@ impl Engine {
                 DownloadState::Queued
             },
             total_bytes: None,
+            max_bytes: site.map(|(_, exact)| exact),
+            deny_redirects: site.is_some(),
             segments: vec![],
             error: None,
             bytes_per_second: 0,
@@ -580,7 +706,7 @@ impl Engine {
         self.stop(id, true).await
     }
 
-    async fn stop(&self, id: DownloadId, cancel: bool) -> Result<()> {
+    pub(crate) async fn stop(&self, id: DownloadId, cancel: bool) -> Result<()> {
         {
             let mut data = self.inner.data.lock().await;
             if data.stopped {
@@ -630,6 +756,20 @@ impl Engine {
         let mut data = self.inner.data.lock().await;
         if data.stopped {
             return Err(Error::Shutdown);
+        }
+        if data
+            .downloads
+            .iter()
+            .find(|d| d.id == id)
+            .is_some_and(|download| {
+                data.media_jobs.iter().any(|job| {
+                    job.owns_child(download) && job.view.state != crate::MediaJobState::Downloading
+                })
+            })
+        {
+            return Err(Error::Invalid(
+                "resume the owning media job, not an individual media segment".into(),
+            ));
         }
         if data.automation.pending_captures.contains_key(&id) {
             return Err(Error::Invalid(
@@ -693,6 +833,11 @@ impl Engine {
             .iter()
             .find(|d| d.id == id)
             .ok_or(Error::NotFound)?;
+        if download.restricted_site_child() {
+            return Err(Error::Invalid(
+                "site child credentials cannot be changed".into(),
+            ));
+        }
         if data.running.contains_key(&id)
             || !matches!(
                 download.state,
@@ -736,6 +881,11 @@ impl Engine {
             .position(|d| d.id == id)
             .ok_or(Error::NotFound)?;
         let mut download = data.downloads[index].clone();
+        if download.restricted_site_child() {
+            return Err(Error::Invalid(
+                "site child destination cannot be changed".into(),
+            ));
+        }
         if data.running.contains_key(&id)
             || !matches!(
                 download.state,
@@ -796,6 +946,9 @@ impl Engine {
             .position(|d| d.id == id)
             .ok_or(Error::NotFound)?;
         let mut download = data.downloads[position].clone();
+        if download.restricted_site_child() {
+            return Err(Error::Invalid("site child URL cannot be changed".into()));
+        }
         if data.running.contains_key(&id)
             || !matches!(
                 download.state,
@@ -857,9 +1010,13 @@ impl Engine {
 
     /// Pauses all work and waits for workers to drain. This engine cannot be restarted.
     pub async fn shutdown_if_idle(&self) -> Result<bool> {
+        let Some(site_idle) = self.inner.site.idle_guard().await else {
+            return Ok(false);
+        };
         {
             let mut data = self.inner.data.lock().await;
             if !data.running.is_empty()
+                || !data.media_running.is_empty()
                 || self.inner.media.operations.try_write().is_err()
                 || !data.synchronizing.is_empty()
                 || !data.automation.pending_captures.is_empty()
@@ -877,16 +1034,22 @@ impl Engine {
             }
             data.stopped = true;
         }
+        self.inner.site.shutdown.cancel();
+        drop(site_idle);
         self.shutdown().await?;
         Ok(true)
     }
 
     /// Pauses all work and waits for workers to drain. This engine cannot be restarted.
     pub async fn shutdown(&self) -> Result<()> {
+        self.shutdown_site_projects().await?;
         self.inner.media.shutdown.cancel();
         let synchronizing: Vec<_> = {
             let mut data = self.inner.data.lock().await;
             data.stopped = true;
+            for token in data.media_running.values() {
+                token.cancel();
+            }
             for token in data.synchronizing.values() {
                 token.cancel();
             }
@@ -920,6 +1083,9 @@ impl Engine {
             self.wait_sync_idle(id).await;
         }
         let _media_drained = self.inner.media.operations.write().await;
+        while !self.inner.data.lock().await.media_running.is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
         let data = self.inner.data.lock().await;
         let mut ownership = self.inner.database_lock.lock().await;
         if ownership.is_none() {

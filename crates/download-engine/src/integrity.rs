@@ -26,6 +26,13 @@ pub(crate) async fn verify(inner: &Inner, id: DownloadId, token: &CancellationTo
             .iter_mut()
             .find(|d| d.id == id)
             .ok_or(Error::NotFound)?;
+        if download.restricted_site_child()
+            && (download.max_bytes.is_none()
+                || download.max_bytes != Some(download.downloaded_bytes())
+                || download.max_bytes != download.total_bytes)
+        {
+            return Err(Error::Length);
+        }
         download.integrity = IntegrityStatus::Verifying;
         download.sha256 = None;
         (

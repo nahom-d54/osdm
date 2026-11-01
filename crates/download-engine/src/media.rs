@@ -10,8 +10,22 @@ const MAX_REDIRECTS: usize = 10;
 const MAX_ALLOWED_ORIGINS: usize = 32;
 const INSPECTION_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// One bounded unauthenticated response. Redirect locations are untrusted and
+/// must pass the caller's site policy before another request. No Debug because
+/// Location can contain secret query strings.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct SitePageResponse {
+    pub status: u16,
+    pub content_type: Option<String>,
+    pub location: Option<String>,
+    pub content_length: Option<u64>,
+    pub body: Vec<u8>,
+    /// Includes response bodies consumed by retries; charge this to site budgets.
+    pub received_bytes: u64,
+}
+
 pub(crate) struct Inspector {
-    client: reqwest::Client,
+    pub(crate) client: reqwest::Client,
     pub shutdown: CancellationToken,
     pub operations: RwLock<()>,
 }
@@ -34,6 +48,101 @@ impl Inspector {
 }
 
 impl Engine {
+    /// Fetch exactly one response, never following redirects. All network waits
+    /// share ordinary engine admission/rate/cooldown budgets. The caller owns
+    /// robots, origin and redirect policy; no credentials or referrer are sent.
+    pub async fn fetch_site_page(
+        &self,
+        source: &str,
+        max_bytes: usize,
+        cancellation: &CancellationToken,
+    ) -> Result<SitePageResponse> {
+        self.fetch_site_response(source, max_bytes, cancellation, false)
+            .await
+    }
+
+    /// One-hop HEAD metadata using the same admission/cancellation policy as GET.
+    /// Content-Length describes the resource, not a downloaded response body.
+    pub async fn head_site_page(
+        &self,
+        source: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<SitePageResponse> {
+        self.fetch_site_response(source, 0, cancellation, true)
+            .await
+    }
+
+    async fn fetch_site_response(
+        &self,
+        source: &str,
+        max_bytes: usize,
+        cancellation: &CancellationToken,
+        head: bool,
+    ) -> Result<SitePageResponse> {
+        if max_bytes > media_capture::MAX_MANIFEST_BYTES {
+            return Err(media_capture::Error::Limit.into());
+        }
+        let inspector = &self.inner.media;
+        let operation = async {
+            let _active = inspector.operations.read().await;
+            if self.inner.data.lock().await.stopped {
+                return Err(Error::Shutdown);
+            }
+            let source = media_capture::MediaUrl::parse(source)?;
+            let mut failures = 0;
+            let mut received_bytes = 0;
+            loop {
+                let mut hint = crate::retry::RetryHint::default();
+                let result = fetch_page_once(
+                    &self.inner,
+                    &source,
+                    max_bytes,
+                    cancellation,
+                    &mut hint,
+                    &mut received_bytes,
+                    head,
+                )
+                .await;
+                let retry = match &result {
+                    Ok(page) => matches!(page.status, 429 | 500 | 502 | 503 | 504),
+                    Err(error) => transfer::retryable(error),
+                };
+                if retry && failures < self.inner.config.max_retries {
+                    transfer::wait_before_retry(
+                        &self.inner,
+                        source.as_str(),
+                        failures,
+                        hint,
+                        cancellation,
+                        None,
+                    )
+                    .await?;
+                    failures += 1;
+                    continue;
+                }
+                if hint.rate_limited {
+                    let url =
+                        Url::parse(source.as_str()).map_err(|_| media_capture::Error::UnsafeUrl)?;
+                    self.inner
+                        .cooldowns
+                        .defer(
+                            url.host_str().ok_or(media_capture::Error::UnsafeUrl)?,
+                            crate::retry::delay(failures, hint.after),
+                        )
+                        .await;
+                }
+                return result;
+            }
+        };
+        tokio::select! {
+            biased;
+            _ = inspector.shutdown.cancelled() => Err(Error::Shutdown),
+            _ = cancellation.cancelled() => Err(Error::Interrupted),
+            result = tokio::time::timeout(INSPECTION_TIMEOUT, operation) =>
+                result.unwrap_or_else(|_| Err(Error::Invalid("site fetch timed out".into()))),
+        }
+    }
+
     /// Fetch and inspect one bounded HLS manifest, without enqueueing media.
     ///
     /// Only the supplied source origin is authorized by default. Additional
@@ -80,6 +189,106 @@ impl Engine {
                 result.unwrap_or_else(|_| Err(Error::Invalid("media inspection timed out".into()))),
         }
     }
+}
+
+async fn fetch_page_once(
+    inner: &Inner,
+    source: &media_capture::MediaUrl,
+    max_bytes: usize,
+    token: &CancellationToken,
+    hint: &mut crate::retry::RetryHint,
+    received_bytes: &mut u64,
+    head: bool,
+) -> Result<SitePageResponse> {
+    let _permits = transfer::permits(inner, source.as_str(), token, None, false).await?;
+    let response = inner
+        .media
+        .client
+        .request(
+            if head {
+                reqwest::Method::HEAD
+            } else {
+                reqwest::Method::GET
+            },
+            source.as_str(),
+        )
+        .header(header::ACCEPT_ENCODING, "identity")
+        .send()
+        .await?;
+    let status = response.status().as_u16();
+    if matches!(status, 429 | 503) {
+        *hint = transfer::retry_hint(&response);
+    }
+    if response
+        .headers()
+        .get_all(header::CONTENT_ENCODING)
+        .iter()
+        .any(|v| v != "identity")
+    {
+        return Err(Error::Invalid(
+            "encoded site responses are unsupported".into(),
+        ));
+    }
+    let text_header = |name| -> Result<Option<String>> {
+        response
+            .headers()
+            .get(name)
+            .map(|value| {
+                let value = value
+                    .to_str()
+                    .map_err(|_| Error::Invalid("invalid site response header".into()))?;
+                if value.len() > 8192 || value.chars().any(char::is_control) {
+                    return Err(media_capture::Error::Limit.into());
+                }
+                Ok(value.to_owned())
+            })
+            .transpose()
+    };
+    let content_type = text_header(header::CONTENT_TYPE)?;
+    let location = text_header(header::LOCATION)?;
+    let content_length = response
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .map(|value| {
+            value
+                .to_str()
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .ok_or_else(|| Error::Invalid("invalid site Content-Length".into()))
+        })
+        .transpose()?;
+    if !head && content_length.is_some_and(|length| length > max_bytes as u64 - *received_bytes) {
+        return Err(media_capture::Error::Limit.into());
+    }
+    let mut body = Vec::new();
+    if head {
+        return Ok(SitePageResponse {
+            status,
+            content_type,
+            location,
+            content_length,
+            body,
+            received_bytes: *received_bytes,
+        });
+    }
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        if chunk.len() as u64 > max_bytes as u64 - *received_bytes {
+            return Err(media_capture::Error::Limit.into());
+        }
+        transfer::throttle(inner, chunk.len() as u64, token).await?;
+        *received_bytes += chunk.len() as u64;
+        body.extend_from_slice(&chunk);
+    }
+    Ok(SitePageResponse {
+        status,
+        content_type,
+        location,
+        content_length,
+        body,
+        received_bytes: *received_bytes,
+    })
 }
 
 fn origin(url: &str) -> Result<String> {

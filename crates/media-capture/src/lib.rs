@@ -1,6 +1,14 @@
 #![doc = include_str!("../README.md")]
 
+use serde::{Deserialize, Serialize};
 use url::Url;
+
+mod dash;
+mod merge;
+mod subtitles;
+pub use dash::*;
+pub use merge::*;
+pub use subtitles::*;
 
 /// Maximum accepted manifest size. Callers must also bound network reads.
 pub const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
@@ -11,17 +19,42 @@ const MAX_LINE_BYTES: usize = 8192;
 pub enum Error {
     #[error("media manifest exceeds inspection limits")]
     Limit,
-    #[error("invalid HLS manifest")]
+    #[error("invalid media document")]
     Invalid,
-    #[error("unsupported HLS feature")]
+    #[error("unsupported media feature")]
     Unsupported,
     #[error("media source must be an HTTP(S) URL without credentials or a fragment")]
     UnsafeUrl,
 }
 
 /// A secret-bearing URL. Debug output deliberately omits the entire URL.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, Serialize)]
+#[serde(into = "String")]
 pub struct MediaUrl(Url);
+
+impl From<MediaUrl> for String {
+    fn from(value: MediaUrl) -> Self {
+        value.0.to_string()
+    }
+}
+
+impl<'de> Deserialize<'de> for MediaUrl {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        Self::parse(&value).map_err(serde::de::Error::custom)
+    }
+}
+
+fn resolve(base: &MediaUrl, value: &str) -> Result<MediaUrl, Error> {
+    if value.trim() != value || value.chars().any(char::is_control) {
+        return Err(Error::UnsafeUrl);
+    }
+    let source = MediaUrl::checked(base.0.join(value).map_err(|_| Error::UnsafeUrl)?)?;
+    if base.0.scheme() == "https" && source.0.scheme() != "https" {
+        return Err(Error::UnsafeUrl);
+    }
+    Ok(source)
+}
 
 impl std::fmt::Debug for MediaUrl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -62,22 +95,36 @@ impl MediaUrl {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Variant {
     pub source: MediaUrl,
     /// Peak bandwidth declared by the manifest, in bits per second.
     pub bandwidth: u64,
     pub resolution: Option<(u32, u32)>,
     pub codecs: Option<String>,
+    pub average_bandwidth: Option<u64>,
+    /// Decimal text avoids rounding declared quality metadata.
+    pub frame_rate: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+impl std::fmt::Debug for Variant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Variant")
+            .field("source", &self.source)
+            .field("bandwidth", &self.bandwidth)
+            .field("resolution", &self.resolution)
+            .field("average_bandwidth", &self.average_bandwidth)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Segment {
     pub source: MediaUrl,
     pub duration_seconds: f64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Manifest {
     /// Choices in manifest order; inspection never selects or queues a choice.
     Master { variants: Vec<Variant> },
@@ -192,7 +239,9 @@ pub fn inspect_hls(base_url: &str, body: &[u8]) -> Result<Manifest, Error> {
         if base.0.scheme() == "https" && source.0.scheme() != "https" {
             return Err(Error::UnsafeUrl);
         }
-        if let Some((bandwidth, resolution, codecs)) = pending_variant.take() {
+        if let Some((bandwidth, resolution, codecs, average_bandwidth, frame_rate)) =
+            pending_variant.take()
+        {
             if variants.len() == MAX_ENTRIES {
                 return Err(Error::Limit);
             }
@@ -201,6 +250,8 @@ pub fn inspect_hls(base_url: &str, body: &[u8]) -> Result<Manifest, Error> {
                 bandwidth,
                 resolution,
                 codecs,
+                average_bandwidth,
+                frame_rate,
             });
         } else if let Some(duration_seconds) = pending_duration.take() {
             if segments.len() == MAX_ENTRIES {
@@ -244,12 +295,20 @@ fn positive(value: &str) -> Result<u64, Error> {
     }
 }
 
-type VariantAttributes = (u64, Option<(u32, u32)>, Option<String>);
+type VariantAttributes = (
+    u64,
+    Option<(u32, u32)>,
+    Option<String>,
+    Option<u64>,
+    Option<String>,
+);
 
 fn parse_variant(mut text: &str) -> Result<VariantAttributes, Error> {
     let mut bandwidth = None;
     let mut resolution = None;
     let mut codecs = None;
+    let mut average_bandwidth = None;
+    let mut frame_rate = None;
     while !text.is_empty() {
         let (key, rest) = text.split_once('=').ok_or(Error::Invalid)?;
         let quoted = rest.starts_with('"');
@@ -272,6 +331,17 @@ fn parse_variant(mut text: &str) -> Result<VariantAttributes, Error> {
             "CODECS" if codecs.is_none() && quoted && !value.is_empty() => {
                 codecs = Some(value.to_owned());
             }
+            "AVERAGE-BANDWIDTH" if average_bandwidth.is_none() && !quoted => {
+                average_bandwidth = Some(positive(value)?)
+            }
+            "FRAME-RATE" if frame_rate.is_none() && !quoted => {
+                if !value.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+                    || !value.parse::<f64>().is_ok_and(|v| v.is_finite() && v > 0.0)
+                {
+                    return Err(Error::Invalid);
+                }
+                frame_rate = Some(value.to_owned());
+            }
             "BANDWIDTH" | "RESOLUTION" | "CODECS" => return Err(Error::Invalid),
             _ => return Err(Error::Unsupported),
         }
@@ -283,5 +353,40 @@ fn parse_variant(mut text: &str) -> Result<VariantAttributes, Error> {
             .filter(|v| !v.is_empty())
             .ok_or(Error::Invalid)?;
     }
-    Ok((bandwidth.ok_or(Error::Invalid)?, resolution, codecs))
+    Ok((
+        bandwidth.ok_or(Error::Invalid)?,
+        resolution,
+        codecs,
+        average_bandwidth,
+        frame_rate,
+    ))
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HlsVodPlan {
+    pub manifest: MediaUrl,
+    pub media_sequence: u64,
+    pub segments: Vec<Segment>,
+}
+
+/// A complete standalone-segment VOD plan; segment identity is sequence + index.
+pub fn inspect_hls_vod(base: &str, body: &[u8]) -> Result<HlsVodPlan, Error> {
+    let Manifest::Vod { segments } = inspect_hls(base, body)? else {
+        return Err(Error::Unsupported);
+    };
+    let text = std::str::from_utf8(body).map_err(|_| Error::Invalid)?;
+    let media_sequence = text
+        .lines()
+        .find_map(|l| l.strip_prefix("#EXT-X-MEDIA-SEQUENCE:"))
+        .map(unsigned)
+        .transpose()?
+        .unwrap_or(0);
+    media_sequence
+        .checked_add(segments.len() as u64)
+        .ok_or(Error::Invalid)?;
+    Ok(HlsVodPlan {
+        manifest: MediaUrl::parse(base)?,
+        media_sequence,
+        segments,
+    })
 }
