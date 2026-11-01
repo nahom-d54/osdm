@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { getBridge } from "@/lib/bridge";
 import { useEngine } from "@/store/engine";
 import { useSettings } from "@/store/settings";
+import { BrowserSetup } from "@/components/BrowserSetup";
 
 export function OnboardingDialog() {
   const ready = useEngine((state) => state.ready);
@@ -75,6 +76,7 @@ export function OnboardingDialog() {
           Choose an output folder and configure categories, completion behavior,
           and concurrency in Settings. You can repeat this check there.
         </p>
+        <BrowserSetup />
       </div>
     </Modal>
   );

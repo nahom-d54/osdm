@@ -70,13 +70,17 @@ Most downloads fail loudly for ordinary reasons: a server rate-limits a burst of
   use a protected native helper; Windows startup and explicit, cancellable
   completion actions are available. Start with [P2 validation and limits](docs/p2-validation.md),
   the [CLI contract](crates/cli/README.md), and [browser setup](extension/README.md).
-  Native/browser release gates remain open; this is not a P2 completion claim.
+   Native/browser release gates remain open; this is not a P2 completion claim.
+  Guided extension setup is available from onboarding, Settings and Capture &
+  queues; see [browser setup and resource builds](docs/browser-setup.md). Browser
+  approval is still required, and unpublished store listings are not fabricated.
 
 - **P3 retrieval (source, bounded subset).** Explicit browser/desktop media
   selection, budgeted HLS/static-DASH inspection, durable verified HLS and static
-  DASH → Matroska capture with optional subtitles, and resumable, budgeted,
-  robots-respecting Site Grabber projects. Live/DRM capture, scheduled site runs
-  and caching remain open. See [P3 scope and limits](docs/p3-retrieval.md) and the
+  DASH → MP4/Matroska capture with selected external TS audio/WebVTT, and resumable,
+  budgeted, robots-respecting Site Grabber projects with confirmed schedules,
+  caching, templates and filter continuation. Live/DRM capture remains unsupported.
+  See [P3 scope and limits](docs/p3-retrieval.md) and the
   [Site Grabber policy](docs/site-grabber.md).
 
 The adaptive connection, recovery, and integrity foundation is implemented. Mirror intelligence, per-download priorities, storage reservations, duplicate detection, predictive scheduling, and automatic organization are planned in [the phased roadmap](docs/intelligent-downloads.md).

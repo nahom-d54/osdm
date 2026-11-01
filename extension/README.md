@@ -8,10 +8,28 @@ release gate in [P2 validation](../docs/p2-validation.md).
 
 ## Windows setup
 
+### Guided desktop setup
+
+Installed builds made with `pnpm desktop:build` include the native helper and
+allowlisted extension files. Open **Set up browser extension** from onboarding,
+Settings, or Capture & queues. Choose a browser, install/load the extension with
+browser approval, confirm per-user helper registration, enable local integration
+and click **Check connection** in the extension popup. There is no administrator
+elevation or silent extension installation. Foreign registrations are refused;
+owned ones can be removed with a separate confirmation.
+
+No published store listing is configured by default, so the UI explains manual
+loading instead of opening a placeholder link. See [guided setup and packaging
+configuration](../docs/browser-setup.md) for store metadata, exact safety rules,
+resource builds and validation limits.
+
+### Source/manual setup
+
 1. Build/open the desktop app. Build helpers with:
    `cargo build --release -p osdm-browser-bridge -p osdm-cli`.
-   Future release workflows package these in a separate capture-tools archive;
-   they are not silently registered by the desktop installer.
+    Release workflows also package these in a separate capture-tools archive.
+    The desktop build wrapper bundles the native helper, but neither build path
+    silently registers a host or installs a browser extension.
 2. Run `./extension/prepare.ps1 -Browser chromium` and load `extension/unpacked`
    as an unpacked extension from Chrome/Edge's extensions page (developer mode).
    For Firefox use `-Browser firefox -Output unpacked-firefox` and temporarily load

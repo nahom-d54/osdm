@@ -9,6 +9,7 @@ import { joinPath } from "@/lib/format";
 import type { Automation, AutomationCommand, BatchResult } from "@/lib/types";
 import { useEngine } from "@/store/engine";
 import { useSettings } from "@/store/settings";
+import { BrowserSetup } from "@/components/BrowserSetup";
 
 const selectClass =
   "h-9 w-full rounded-md border border-line-soft bg-background px-2 text-xs focus-visible:outline-2 focus-visible:outline-brand";
@@ -188,8 +189,8 @@ export function AutomationDialog({
         <section aria-label="Browser integration" className="space-y-2">
           <h2 className="eyebrow">Browser capture</h2>
           <p className="text-muted-foreground">
-            Install the Chromium or Firefox extension and register
-            osdm-native-host before enabling. Automatic capture sends no
+            Use guided setup to add the extension and connect its local helper.
+            Automatic capture sends no
             cookies; explicit cookie handoff is scoped to one requested
             transfer.
           </p>
@@ -208,6 +209,7 @@ export function AutomationDialog({
             />
             Enable local browser integration
           </label>
+          <BrowserSetup onCaptureChanged={setCaptureEnabled} />
         </section>
         <section className="space-y-3" aria-label="Batch capture">
           <label className="flex items-center gap-2">

@@ -28,6 +28,11 @@ export interface EngineBridge {
   configureAutomation(command: import("@/lib/types").AutomationCommand): Promise<import("@/lib/types").Automation>;
   captureStatus(): Promise<boolean>;
   enableCapture(enabled: boolean): Promise<void>;
+  browserSetupStatus(): Promise<import("@/lib/browser-setup").BrowserSetupStatus>;
+  registerBrowserHelper(browser: import("@/lib/browser-setup").BrowserTarget, extensionId: string, confirmed: boolean): Promise<void>;
+  unregisterBrowserHelper(browser: import("@/lib/browser-setup").BrowserTarget, confirmed: boolean): Promise<void>;
+  openExtensionStore(browser: import("@/lib/browser-setup").BrowserTarget): Promise<void>;
+  openExtensionFiles(browser: import("@/lib/browser-setup").BrowserTarget): Promise<void>;
   powerStatus(): Promise<import("@/lib/types").PowerPlan | null>;
   armPower(queueId: string, action: import("@/lib/types").CompletionAction, consent: boolean): Promise<void>;
   cancelPower(): Promise<void>;

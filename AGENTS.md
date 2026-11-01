@@ -34,11 +34,13 @@ cargo clippy --workspace --all-targets -- -D warnings
 Build the Windows installer:
 
 ```powershell
-pnpm tauri build --bundles nsis
+pnpm desktop:build --bundles nsis
 ```
 
 The installer is written to `target/release/bundle/nsis/` (or
 `src-tauri/target/...` in a non-workspace checkout).
+The desktop build wrapper includes the native messaging helper and allowlisted
+browser extension resources. Raw `pnpm tauri build` bypasses that staging step.
 
 Do not search or edit `target/`, `node_modules/`, `dist/`, or `src-tauri/gen/`.
 

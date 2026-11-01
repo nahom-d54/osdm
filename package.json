@@ -1,12 +1,12 @@
 {
   "name": "osdm-ui",
   "private": true,
-  "version": "0.1.3-alpha.1",
+  "version": "0.1.4-alpha.1",
   "type": "module",
   "scripts": {
     "tauri": "tauri",
     "desktop:dev": "tauri dev",
-    "desktop:build": "tauri build",
+    "desktop:build": "node scripts/desktop-build.mjs",
     "dev": "vite",
     "dev:web": "vite --mode web",
     "build": "tsc --noEmit && vite build",

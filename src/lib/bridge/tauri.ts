@@ -68,6 +68,11 @@ export class TauriBridge implements EngineBridge {
   async automation(): Promise<import("@/lib/types").Automation> { return this.invoke("engine_automation"); }
   async captureStatus(): Promise<boolean> { return this.invoke("capture_status"); }
   async enableCapture(enabled: boolean): Promise<void> { return this.invoke("capture_enable", { enabled }); }
+  async browserSetupStatus(): Promise<import("@/lib/browser-setup").BrowserSetupStatus> { return this.invoke("browser_setup_status"); }
+  async registerBrowserHelper(browser: import("@/lib/browser-setup").BrowserTarget, extensionId: string, confirmed: boolean): Promise<void> { await this.invoke("browser_setup_register", { browser, extensionId, confirmed }); }
+  async unregisterBrowserHelper(browser: import("@/lib/browser-setup").BrowserTarget, confirmed: boolean): Promise<void> { await this.invoke("browser_setup_unregister", { browser, confirmed }); }
+  async openExtensionStore(browser: import("@/lib/browser-setup").BrowserTarget): Promise<void> { await this.invoke("browser_setup_open_store", { browser }); }
+  async openExtensionFiles(browser: import("@/lib/browser-setup").BrowserTarget): Promise<void> { await this.invoke("browser_setup_open_files", { browser }); }
   async powerStatus(): Promise<import("@/lib/types").PowerPlan | null> { return this.invoke("power_status"); }
   async armPower(queueId: string, action: import("@/lib/types").CompletionAction, consent: boolean): Promise<void> { return this.invoke("power_arm", { queueId, action, consent }); }
   async cancelPower(): Promise<void> { return this.invoke("power_cancel"); }

@@ -1,3 +1,4 @@
+mod browser_setup;
 mod capture;
 mod completion;
 mod power;
@@ -672,6 +673,11 @@ pub fn run() {
             engine_configure_automation,
             capture::capture_status,
             capture::capture_enable,
+            browser_setup::browser_setup_status,
+            browser_setup::browser_setup_register,
+            browser_setup::browser_setup_unregister,
+            browser_setup::browser_setup_open_store,
+            browser_setup::browser_setup_open_files,
             power::power_status,
             power::power_arm,
             power::power_cancel,

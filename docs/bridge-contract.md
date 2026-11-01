@@ -90,6 +90,11 @@ camelCase; nested Rust structs retain snake_case. Errors reject with a string.
 | `reveal_path` | `path: string` | `()` |
 | `settings_load` | — | `AppSettings` or `null` |
 | `settings_save` | `settings: AppSettings` | `()` |
+| `browser_setup_status` | — | `BrowserSetupStatus` |
+| `browser_setup_register` | `browser: "chrome" \| "edge" \| "firefox", extensionId: string, confirmed: boolean` | `()` |
+| `browser_setup_unregister` | `browser: "chrome" \| "edge" \| "firefox", confirmed: boolean` | `()` |
+| `browser_setup_open_store` | `browser: "chrome" \| "edge" \| "firefox"` | `()` |
+| `browser_setup_open_files` | `browser: "chrome" \| "edge" \| "firefox"` | `()` |
 | `updates_check` | — | `()`; opens the native update flow |
 | `test_sound` | `path: string` | `()`; validates and plays a Windows WAV |
 | `drag_completed` | `id: string` | `()`; native copy drag of an existing completed file |
@@ -172,6 +177,33 @@ Live, event, encrypted/DRM, byte-range, HLS initialization-map, DASH
 template/timeline and multi-period sources are rejected rather
 than silently altered. Job `sha256` is locally computed, not publisher-
 authenticated integrity.
+
+### Guided browser setup
+
+Onboarding, Settings and Capture & queues expose the same explicit setup checklist.
+`BrowserSetupStatus` is `{registration_supported, helper_available, capture_enabled,
+last_handshake, browsers}`. `last_handshake` is nullable Unix seconds, updated only
+after an authenticated, enabled, engine-ready native `ping`; it is session-wide,
+not an installed-extension detector or per-browser connection assertion. Browser
+entries contain `{browser, name, store_url, extension_id, registered, conflict,
+unpacked_available}`; IDs/URLs are configured release metadata, not guessed installs.
+
+Registration/removal require explicit confirmation and use only fixed Windows
+HKCU Chrome/Edge/Firefox host keys and packaged helper paths. Chromium IDs are
+validated; Firefox uses `osdm@osdm.app`. Existing foreign/modified registrations
+are never overwritten. Removal deletes only the owned default value, retaining
+files, other values and browsers. Manifests are persisted/synced before registration
+and use create-new, content-hash paths. Isolated native tests block mutations and
+external launches and do not read actual host keys. The browser mock refuses native
+setup rather than fabricating results. See [browser setup](browser-setup.md).
+
+Store/file commands accept a browser enum, never a URL, registry path or executable
+from the webview. Store URLs are derived from optional build-time official listing
+metadata; without it the UI gives manual packaged-file instructions. The user must
+approve extension installation in the browser. Registration does not enable
+capture or automatic interception; those are separate explicit controls.
+
+### Media inspection lifecycle
 
 Inspection IDs support cancellation, including a bounded cancellation tombstone
 when cancellation arrives before native admission. Closing/changing the dialog

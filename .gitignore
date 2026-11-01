@@ -11,3 +11,4 @@
 /test-results/
 /playwright-report/
 extension/unpacked*/
+/src-tauri/.bundle-staging/

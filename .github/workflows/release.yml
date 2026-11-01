@@ -23,6 +23,11 @@ concurrency:
 env:
   RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
   CARGO_TERM_COLOR: always
+  OSDM_CHROME_EXTENSION_ID: ${{ vars.CHROME_ITEM_ID }}
+  OSDM_CHROMIUM_PUBLIC_KEY: ${{ vars.CHROME_PUBLIC_KEY }}
+  OSDM_EDGE_EXTENSION_ID: ${{ vars.EDGE_ITEM_ID }}
+  OSDM_EDGE_PUBLIC_KEY: ${{ vars.EDGE_PUBLIC_KEY }}
+  OSDM_FIREFOX_ADDON_SLUG: ${{ vars.FIREFOX_ADDON_SLUG }}
 
 jobs:
   preflight:
@@ -118,7 +123,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build Windows installer
-        run: pnpm tauri build --bundles nsis
+        run: pnpm desktop:build --bundles nsis
 
       - name: Build capture and automation tools
         shell: pwsh
@@ -197,7 +202,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build Debian package
-        run: pnpm tauri build --bundles deb
+        run: pnpm desktop:build --bundles deb
 
       - name: Build capture and automation tools
         run: |
@@ -258,7 +263,9 @@ jobs:
 
           - Windows: NSIS installer
           - Linux: Debian package for Ubuntu 24.04 and newer
-          - Capture tools: separate CLI/native-host archives with extension source and setup scripts (manual registration; extensions are not store-signed)
+          - Desktop packages include the native helper and browser extension files for guided, consent-based setup.
+          - Capture tools: separate CLI/native-host archives with source and setup scripts for advanced/manual setups.
+          - Browser extensions still require browser approval; no store listing or signing is implied.
 
           SHA256SUMS.txt covers every downloadable asset.
 
@@ -266,9 +273,12 @@ jobs:
 
           Database upgrades may prevent reopening application data with older binaries.
           Capture/automation is a preview: synchronization publishes separate revisions, not in-place replacements; the full P2 gate remains open.
+          Media/Site Grabber is a bounded P3 preview: explicit HLS/DASH choices, external TS audio/WebVTT, verified no-overwrite output and scoped site projects. Live/DRM and HLS fMP4/raw-ADTS renditions remain unsupported. Back up data before the schema-10 upgrade.
 
           **Changes and known limitations:** https://github.com/${{ github.repository }}/blob/$RELEASE_TAG/CHANGELOG.md
           **Capture validation:** https://github.com/${{ github.repository }}/blob/$RELEASE_TAG/docs/p2-validation.md
+          **Browser setup:** https://github.com/${{ github.repository }}/blob/$RELEASE_TAG/docs/browser-setup.md
+          **Media/Site Grabber scope:** https://github.com/${{ github.repository }}/blob/$RELEASE_TAG/docs/p3-retrieval.md
 
           **Full documentation:** https://github.com/${{ github.repository }}#readme
           EOF

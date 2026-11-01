@@ -13,7 +13,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 use tauri::Manager;
@@ -22,7 +22,17 @@ pub(crate) struct CaptureBridge {
     app: tauri::AppHandle,
     token: String,
     pub enabled: AtomicBool,
+    last_handshake: AtomicU64,
     config: PathBuf,
+}
+
+impl CaptureBridge {
+    pub(crate) fn last_handshake(&self) -> Option<u64> {
+        match self.last_handshake.load(Ordering::Acquire) {
+            0 => None,
+            value => Some(value),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -91,6 +101,7 @@ pub(crate) fn start(app: &tauri::AppHandle, directory: PathBuf) {
                 app: app.clone(),
                 token: endpoint.token,
                 enabled: AtomicBool::new(enabled),
+                last_handshake: AtomicU64::new(0),
                 config,
             });
             app.manage(state.clone());
@@ -159,7 +170,11 @@ async fn handle_authorized(
     let result: Result<Value, &'static str> = async {
         let engine = shell.engine().await.map_err(|_| "not_ready")?;
         match message {
-            Message::Ping => Ok(json!({"ok":true,"version":1})),
+            Message::Ping => {
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                state.last_handshake.store(now, Ordering::Release);
+                Ok(json!({"ok":true,"version":1}))
+            },
             Message::OfferMedia { url, title, subtitle_url, kind } => {
                 crate::retrieval::offer(&state.app, url, title, subtitle_url, kind).await?;
                 Ok(json!({"ok":true,"offered":true}))

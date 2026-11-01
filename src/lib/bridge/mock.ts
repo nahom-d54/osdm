@@ -267,6 +267,11 @@ export class MockBridge implements EngineBridge {
   async automation(): Promise<import("@/lib/types").Automation> { return structuredClone(this.automationState); }
   async captureStatus(): Promise<boolean> { return false; }
   async enableCapture(_enabled: boolean): Promise<void> { throw new BridgeError("Browser integration requires the native desktop app and registered host."); }
+  async browserSetupStatus(): Promise<import("@/lib/browser-setup").BrowserSetupStatus> { throw new BridgeError("Guided browser setup requires the desktop app. Browser preview cannot inspect or register a native helper."); }
+  async registerBrowserHelper(_browser: import("@/lib/browser-setup").BrowserTarget, _extensionId: string, _confirmed: boolean): Promise<void> { throw new BridgeError("Native-helper registration requires the desktop app."); }
+  async unregisterBrowserHelper(_browser: import("@/lib/browser-setup").BrowserTarget, _confirmed: boolean): Promise<void> { throw new BridgeError("Native-helper removal requires the desktop app."); }
+  async openExtensionStore(_browser: import("@/lib/browser-setup").BrowserTarget): Promise<void> { throw new BridgeError("Browser-store setup requires the desktop app."); }
+  async openExtensionFiles(_browser: import("@/lib/browser-setup").BrowserTarget): Promise<void> { throw new BridgeError("Packaged extension files require the desktop app."); }
   async powerStatus(): Promise<import("@/lib/types").PowerPlan | null> { return null; }
   async armPower(_queueId: string, _action: import("@/lib/types").CompletionAction, _consent: boolean): Promise<void> { throw new BridgeError("Completion actions require the native Windows app."); }
   async cancelPower(): Promise<void> {}

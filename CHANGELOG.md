@@ -6,7 +6,29 @@ All notable changes to OSDM are documented here. This project follows
 
 ## [Unreleased]
 
+### Planned
+
+- Dynamic bandwidth allocation with per-download priorities.
+- Storage-aware reservations and duplicate detection.
+- Mirror benchmarking and failover.
+- Predictive scheduling and automatic file organization.
+- Live/DRM capture and HLS fMP4/raw-ADTS renditions.
+
+## [0.1.4-alpha.1] - 2026-11-01
+
+Differentiated retrieval and guided browser setup preview. Back up application
+data before upgrading: schema 10 cannot be reopened by older binaries. Native
+installer/browser-store and production playback release gates remain open; live
+and DRM media remain unsupported. Extension installation requires browser approval.
+
 ### Added
+
+- Guided Chrome/Edge/Firefox setup from onboarding, Settings and Capture & queues:
+  explicit per-user helper registration/removal, foreign-registration refusal,
+  official-store actions only when configured, manual-file fallback and authenticated
+  session-wide connection status. No silent browser-extension installation.
+- `pnpm desktop:build` packages the native messaging helper and allowlisted browser
+  assets; release builds use that wrapper. Browser setup still requires consent.
 
 - Engine-owned bounded HLS and static-DASH manifest inspection with explicit
   redirect-origin authorization, shared transfer budgets, cancellation and
@@ -42,14 +64,6 @@ All notable changes to OSDM are documented here. This project follows
 - External HLS VOD MPEG-TS audio and segmented WebVTT renditions with explicit
   variant/group selection, approved origins, transport-clock alignment, caption
   boundary deduplication and durable pause/restart (schema 10).
-
-### Planned
-
-- Dynamic bandwidth allocation with per-download priorities.
-- Storage-aware reservations and duplicate detection.
-- Mirror benchmarking and failover.
-- Predictive scheduling and automatic file organization.
-- Live/DRM capture and HLS fMP4/raw-ADTS renditions.
 
 P3's bounded subset is implemented in source and tested; it is not claimed
 complete against every `PLAN.md` §6.4 bullet. See

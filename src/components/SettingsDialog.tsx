@@ -13,6 +13,7 @@ import { getBridge } from "@/lib/bridge";
 import { CategorySettings } from "@/components/CategorySettings";
 import { DesktopSettings } from "@/components/DesktopSettings";
 import { LayoutSettings } from "@/components/LayoutSettings";
+import { BrowserSetup } from "@/components/BrowserSetup";
 import type { ThemeChoice } from "@/store/settings";
 import { DEFAULT_SETTINGS, useSettings } from "@/store/settings";
 import { useEngine } from "@/store/engine";
@@ -49,6 +50,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
       }
     >
       <div className="flex flex-col gap-5">
+        <section className="space-y-3"><h3 className="eyebrow">Browser integration</h3><BrowserSetup /></section>
         <section>
           <h3 className="eyebrow">Appearance</h3>
           <div className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] items-start gap-4 max-[520px]:grid-cols-1">
