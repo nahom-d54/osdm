@@ -66,6 +66,7 @@ camelCase; nested Rust structs retain snake_case. Errors reject with a string.
 | `engine_cancel_inspection` | `requestId: UUID` | `()` |
 | `engine_create_media_job` | `request: {url, destination, allowed_origins, ffmpeg_path, description, subtitle_url?, category_id?, dash_tracks?, direct_media?}` | media job UUID |
 | `engine_media_jobs` | — | engine media job snapshots |
+| `engine_remove_completed_media_job` | `id: UUID, confirmed: boolean` | `()` |
 | `engine_control_media_job` | `id: UUID, action: "pause" \| "resume" \| "cancel"` | `()` |
 | `media_offers` | — | session-only `{id, url, title, subtitle_url, kind}[]` |
 | `media_dismiss_offer` | `id: UUID` | `()` |
@@ -440,6 +441,15 @@ binaries from ignoring unattended policy, revisions, caches or lifetime charges.
 Legacy project fields default to manual review with no cache or schedule.
 Unknown policy formats and newer database versions are rejected.
 
+Schema **9** prevents revision-8 binaries from ignoring durable media cleanup
+intent. Completed jobs default `removal_pending: false`; confirmed cleanup persists
+true before filesystem work, refuses resume, and stays retryable after restart.
+Only fully stopped completed jobs outside automation queues can be cleaned. It
+validates ownership markers, planned child identities and content hashes, refuses
+foreign/modified files, and removes individual inputs/history/recorded merge anchor
+without unlinking published output. A tiny workspace marker is retained. No broad
+directory deletion or stale-artifact globbing occurs.
+
 ### Site Grabber workflow
 
 `engine_create_site_project` persists an explicit, confirmed project (one origin,
@@ -479,6 +489,14 @@ revalidated, bounded to 16 pages/512 KiB and never serves stale-on-error content
 Media `direct_media` defaults false. True selects a single direct MP4/M4V/MOV
 source for local subtitle remux, without DASH selections. Merged destinations
 accept `.mkv` or `.mp4`; all modes retain verified no-overwrite publication.
+Subtitle format comes from a `.srt`/`.vtt` suffix or a recognized response MIME
+(`application/x-subrip`/`text/vtt`); conflicting declarations fail. This permits
+extensionless exposed DASH/player tracks without guessing or bypassing bounded
+document validation. Manifest-discovered subtitles are never selected implicitly.
+
+Site project templates are scope-free UI presets, not additional engine authority:
+they set finite filters/budgets, clear confirmation, and retain no URL/destination,
+credentials, schedule or automatic-download consent.
 
 `Engine::prepare_capture` atomically inserts a paused download with a 30-second
 lease. Ordinary resume/queue start cannot admit that lease. Commit consumes the

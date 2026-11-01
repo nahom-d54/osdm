@@ -6,7 +6,7 @@ import { Modal } from "@/components/ui/modal";
 import { getBridge } from "@/lib/bridge";
 import { formatBytes } from "@/lib/format";
 import { mediaSource } from "@/lib/retrieval";
-import { scopeFor, siteLimits, type SiteProject, type SiteAction } from "@/lib/site-retrieval";
+import { scopeFor, siteLimits, SITE_TEMPLATES, type SiteProject, type SiteAction } from "@/lib/site-retrieval";
 import { useSettings } from "@/store/settings";
 import { SitePolicyEditor } from "@/components/SitePolicyEditor";
 import { useEngine } from "@/store/engine";
@@ -131,6 +131,12 @@ export function SiteDialog({ open, onClose }: { open: boolean; onClose: () => vo
     <ol className="grid grid-cols-4 gap-2 border-b border-line pb-4 text-[10px]">{STEPS.map((label, index) => <li key={label} aria-current={step === index ? "step" : undefined} className={step === index ? "font-medium text-brand" : "text-muted-foreground"}><span className="mb-1 block font-mono">{index + 1}/4</span>{label}</li>)}</ol>
     {step === 0 && <>
       <Field label="Project name" htmlFor="site-name"><Input id="site-name" value={name} maxLength={128} onChange={(event) => setName(event.target.value)} /></Field>
+      <Field label="Project template" htmlFor="site-template" hint="Optional bounded presets only. Review filters and budgets before confirming; templates never authorize a site or automatic downloads."><select id="site-template" defaultValue="" className="h-9 rounded-md border border-line bg-panel px-3 text-sm" onChange={(event) => {
+        const template = SITE_TEMPLATES.find((value) => value.id === event.target.value);
+        if (!template) return;
+        setExtensions(template.extensions); setPages(template.pages); setFiles(template.files);
+        setMebibytes(template.mebibytes); setDepth(template.depth); setExcludes(""); setConfirmed(false);
+      }}><option value="">Custom project</option>{SITE_TEMPLATES.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</select></Field>
       <Field label="Starting page URL" htmlFor="site-seed"><Input id="site-seed" value={seed} onChange={(event) => { setSeed(event.target.value); setConfirmed(false); }} spellCheck={false} autoComplete="off" /></Field>
       <Field label="Output folder" htmlFor="site-output"><div className="flex gap-2"><Input id="site-output" value={destination} onChange={(event) => setDestination(event.target.value)} /><Button variant="outline" onClick={async () => { try { const result = await getBridge().pickDirectory("Site project output", destination); if (result) setDestination(result); } catch (error) { setError(String(error)); } }}>Browse</Button></div></Field>
       {projects.length > 0 && <section className="border-t border-line pt-4"><h3 className="mb-2 text-sm font-medium">Saved projects</h3>{projects.map((project) => <Button key={project.id} variant="ghost" className="mb-1 w-full justify-between" onClick={() => { setProjectId(project.id); setSelected([]); setStep(3); }}>{project.name}<span className="text-xs text-muted-foreground">{project.state}</span></Button>)}</section>}

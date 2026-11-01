@@ -49,6 +49,7 @@ export interface MediaJob {
   total_segments: number;
   sha256: string | null;
   error: string | null;
+  removal_pending?: boolean;
 }
 
 export function authorizedOrigins(text: string): string[] {

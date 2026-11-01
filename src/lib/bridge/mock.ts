@@ -86,6 +86,7 @@ export class MockBridge implements EngineBridge {
   async dismissMediaOffer(_id: string): Promise<void> {}
   async createMediaJob(_request: import("@/lib/retrieval").MediaJobRequest): Promise<string> { throw new BridgeError("Media downloads require the desktop app and an installed FFmpeg executable."); }
   async mediaJobs(): Promise<import("@/lib/retrieval").MediaJob[]> { return []; }
+  async removeCompletedMediaJob(_id: string, _confirmed: boolean): Promise<void> { throw new BridgeError("Media cleanup requires the desktop app."); }
   async controlMediaJob(_id: string, _action: "pause" | "resume" | "cancel"): Promise<void> { throw new BridgeError("Media downloads require the desktop app."); }
   async createSiteProject(_request: import("@/lib/site-retrieval").SiteProjectRequest): Promise<string> { throw new BridgeError("Site exploration requires the desktop app. Browser preview does not crawl websites."); }
   async siteProjects(): Promise<import("@/lib/site-retrieval").SiteProject[]> { return []; }

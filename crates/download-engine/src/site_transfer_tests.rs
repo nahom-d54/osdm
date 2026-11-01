@@ -419,7 +419,7 @@ async fn schema_six_upgrades_transactionally_and_schema_six_guard_rejects_seven(
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(version, 8);
+    assert_eq!(version, 9);
     assert!(!(0..=6).contains(&version));
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM site_projects")
         .fetch_one(&pool)

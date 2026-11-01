@@ -28,7 +28,7 @@ fn terminal(state: DownloadState) -> bool {
 }
 
 /// Validate ownership from the persisted UUID/path, never from a directory glob.
-async fn remove_owned_partial(download: &OwnedPartial) -> Result<usize> {
+pub(crate) async fn remove_owned_partial(download: &OwnedPartial) -> Result<usize> {
     let parent = download
         .destination
         .parent()

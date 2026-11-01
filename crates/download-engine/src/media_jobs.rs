@@ -71,6 +71,9 @@ pub struct MediaJob {
     /// A locally computed content hash, not publisher-authenticated integrity.
     pub sha256: Option<String>,
     pub error: Option<String>,
+    /// Durable cleanup intent; resume is forbidden until removal finishes.
+    #[serde(default)]
+    pub removal_pending: bool,
 }
 
 /// One merge input group. Fragmented MP4 keeps its initialization segment first.
@@ -345,15 +348,6 @@ impl Engine {
                 .and_then(|s| s.to_str())
                 .unwrap_or("")
                 .to_ascii_lowercase();
-            let format = match extension.as_str() {
-                "srt" => crate::media_capture::SubtitleFormat::Srt,
-                "vtt" => crate::media_capture::SubtitleFormat::WebVtt,
-                _ => {
-                    return Err(invalid(
-                        "only explicitly selected .srt or .vtt subtitles are supported",
-                    ));
-                }
-            };
             let response = self
                 .fetch_site_page(
                     source.as_str(),
@@ -366,6 +360,35 @@ impl Engine {
                     "subtitle fetch failed; subtitle redirects are unsupported",
                 ));
             }
+            // Exposed DASH/player tracks may use extensionless endpoints. Trust
+            // neither a filename nor MIME alone: choose the declared format,
+            // reject conflicts, then validate the complete bounded document.
+            let from_name = match extension.as_str() {
+                "srt" => Some(crate::media_capture::SubtitleFormat::Srt),
+                "vtt" => Some(crate::media_capture::SubtitleFormat::WebVtt),
+                _ => None,
+            };
+            let from_type = match response
+                .content_type
+                .as_deref()
+                .unwrap_or("")
+                .split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase()
+                .as_str()
+            {
+                "text/vtt" => Some(crate::media_capture::SubtitleFormat::WebVtt),
+                "application/x-subrip" => Some(crate::media_capture::SubtitleFormat::Srt),
+                _ => None,
+            };
+            if from_name.is_some() && from_type.is_some() && from_name != from_type {
+                return Err(invalid("subtitle filename and content type disagree"));
+            }
+            let format = from_type.or(from_name).ok_or_else(|| {
+                invalid("subtitle format requires a .srt/.vtt filename or a supported content type")
+            })?;
             crate::media_capture::validate_subtitles(format, &response.body)?;
             Some(SavedSubtitle {
                 format,
@@ -392,6 +415,7 @@ impl Engine {
                 total_segments: total_sources,
                 sha256: None,
                 error: None,
+                removal_pending: false,
             },
             tracks,
             sources: Vec::new(),
@@ -460,6 +484,11 @@ impl Engine {
             .iter_mut()
             .find(|j| j.view.id == id)
             .ok_or(Error::NotFound)?;
+        if job.view.removal_pending {
+            return Err(invalid(
+                "media cleanup is pending; retry removal instead of resuming",
+            ));
+        }
         if job.view.state == MediaJobState::Completed {
             return Ok(());
         }
@@ -480,6 +509,204 @@ impl Engine {
     }
     pub async fn cancel_media_job(&self, id: MediaJobId) -> Result<()> {
         self.stop_media_job(id, true).await
+    }
+
+    /// Explicit completed-job cleanup. Persist intent first and unlink only
+    /// individually validated owned names. The published output is never removed.
+    /// An interrupted cleanup remains visible and can be retried after restart.
+    pub async fn remove_completed_media_job(&self, id: MediaJobId, confirmed: bool) -> Result<()> {
+        if !confirmed {
+            return Err(invalid("confirm removal of completed media job inputs"));
+        }
+        let _operation = tokio::select! {
+            biased;
+            _ = self.inner.media.shutdown.cancelled() => return Err(Error::Shutdown),
+            _ = self.inner.site.shutdown.cancelled() => return Err(Error::Shutdown),
+            guard = self.inner.media.operations.write() => guard,
+        };
+        let mut data = self.inner.data.lock().await;
+        if data.stopped || self.inner.media.shutdown.is_cancelled() {
+            return Err(Error::Shutdown);
+        }
+        let index = data
+            .media_jobs
+            .iter()
+            .position(|job| job.view.id == id)
+            .ok_or(Error::NotFound)?;
+        let mut job = data.media_jobs[index].clone();
+        if job.view.state != MediaJobState::Completed || data.media_running.contains_key(&id) {
+            return Err(invalid(
+                "only fully stopped completed media jobs can be cleaned",
+            ));
+        }
+        validate_layout(&job)?;
+        let children: Vec<_> = data
+            .downloads
+            .iter()
+            .filter(|download| job.view.children.contains(&download.id))
+            .cloned()
+            .collect();
+        if children.iter().any(|download| {
+            download.state != DownloadState::Completed
+                || data.running.contains_key(&download.id)
+                || data.automation.membership.contains_key(&download.id)
+        }) {
+            return Err(invalid(
+                "media inputs must be completed and outside automation queues",
+            ));
+        }
+        for download in &children {
+            let position = job
+                .view
+                .children
+                .iter()
+                .position(|id| *id == download.id)
+                .ok_or(Error::NotFound)?;
+            if job.child_path(position).as_ref() != Some(&download.destination)
+                || job
+                    .source_at(position)
+                    .is_none_or(|(source, _)| source != download.url)
+            {
+                return Err(invalid("media cleanup refuses a changed child identity"));
+            }
+        }
+        job.view.removal_pending = true;
+        self.inner.store.save_media_job(&job).await?;
+        data.media_jobs[index] = job.clone();
+        // Site shutdown starts before media shutdown and can itself need Data.
+        // Observe both so hashing while holding Data cannot obstruct shutdown.
+        let token = &self.inner.site.shutdown;
+        let mut owned = Vec::new();
+        if tokio::fs::try_exists(&job.directory).await? {
+            // Do not create a missing workspace during cleanup.
+            let metadata = tokio::fs::symlink_metadata(&job.directory).await?;
+            if !metadata.is_dir()
+                || metadata.file_type().is_symlink()
+                || tokio::fs::canonicalize(&job.directory).await? != job.directory
+            {
+                return Err(invalid("media cleanup refuses a changed workspace"));
+            }
+            let marker = job.directory.join("owner");
+            regular_file(&marker).await?;
+            if tokio::fs::metadata(&marker).await?.len() != job.marker.len() as u64
+                || tokio::fs::read(&marker).await? != job.marker.as_bytes()
+            {
+                return Err(invalid("media cleanup refuses a changed ownership marker"));
+            }
+            let mut entries = tokio::fs::read_dir(&job.directory).await?;
+            while let Some(entry) = entries.next_entry().await? {
+                if token.is_cancelled() {
+                    return Err(Error::Shutdown);
+                }
+                let path = entry.path();
+                if path == marker {
+                    continue;
+                }
+                regular_file(&path).await?;
+                if let Some(download) = children.iter().find(|download| {
+                    download.destination == path || download.temporary_path == path
+                }) {
+                    let expected = download
+                        .sha256
+                        .as_deref()
+                        .ok_or_else(|| invalid("media input has no integrity anchor"))?;
+                    let (hash, _) = hash_file(&path, token, &self.inner.media.shutdown).await?;
+                    if hash != expected {
+                        return Err(invalid("media cleanup refuses modified input"));
+                    }
+                } else {
+                    let name = path
+                        .file_stem()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("");
+                    let subtitle = job.subtitle.as_ref().ok_or_else(|| {
+                        invalid("media cleanup found an unrelated workspace file")
+                    })?;
+                    let extension = if subtitle.format == crate::media_capture::SubtitleFormat::Srt
+                    {
+                        "srt"
+                    } else {
+                        "vtt"
+                    };
+                    if uuid::Uuid::parse_str(name).is_err()
+                        || path.extension().and_then(|value| value.to_str()) != Some(extension)
+                        || tokio::fs::metadata(&path).await?.len() != subtitle.body.len() as u64
+                        || tokio::fs::read(&path).await? != subtitle.body
+                    {
+                        return Err(invalid("media cleanup found an unrelated workspace file"));
+                    }
+                }
+                if !children
+                    .iter()
+                    .any(|download| download.temporary_path == path)
+                {
+                    owned.push(path);
+                }
+            }
+        }
+        if let Some(artifact) = &job.artifact
+            && tokio::fs::try_exists(artifact).await?
+        {
+            if same_destination(artifact, &job.view.destination) {
+                return Err(invalid(
+                    "media cleanup must never unlink the published destination",
+                ));
+            }
+            regular_file(artifact).await?;
+            if tokio::fs::canonicalize(
+                artifact
+                    .parent()
+                    .ok_or_else(|| invalid("invalid media artifact parent"))?,
+            )
+            .await?
+                != artifact.parent().unwrap()
+            {
+                return Err(invalid("media cleanup refuses a changed artifact parent"));
+            }
+            let (hash, length) = hash_file(artifact, token, &self.inner.media.shutdown).await?;
+            if Some(hash) != job.view.sha256 || Some(length) != job.length {
+                return Err(invalid("media cleanup refuses a modified artifact"));
+            }
+            owned.push(artifact.clone());
+        }
+        for download in &children {
+            if tokio::fs::try_exists(&download.temporary_path).await? {
+                let (hash, _) =
+                    hash_file(&download.temporary_path, token, &self.inner.media.shutdown).await?;
+                if Some(hash) != download.sha256 {
+                    return Err(invalid("media cleanup refuses a modified transfer anchor"));
+                }
+            }
+        }
+        // Complete validation before deleting any content; never remove the output.
+        for download in &children {
+            if token.is_cancelled() {
+                return Err(Error::Shutdown);
+            }
+            crate::cleanup::remove_owned_partial(&crate::cleanup::OwnedPartial::from(download))
+                .await?;
+        }
+        for path in owned {
+            if token.is_cancelled() {
+                return Err(Error::Shutdown);
+            }
+            tokio::fs::remove_file(path).await?;
+        }
+        for download in &children {
+            self.inner.store.remove(download, false).await?;
+            data.downloads.retain(|entry| entry.id != download.id);
+            self.inner.credentials.lock().await.remove(&download.id);
+            self.inner
+                .captured_headers
+                .lock()
+                .await
+                .remove(&download.id);
+        }
+        // Keep the tiny ownership marker/workspace as a recovery anchor. No
+        // recursive directory deletion, directory globs or output unlinking.
+        self.inner.store.delete_media_job(id).await?;
+        data.media_jobs.remove(index);
+        Ok(())
     }
 
     async fn stop_media_job(&self, id: MediaJobId, cancel: bool) -> Result<()> {
@@ -1303,6 +1530,57 @@ mod tests {
         assert!(matches!(waiting.await, Err(Error::Interrupted)));
         drop(first);
         drop(second);
+        engine.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn cleanup_never_unlinks_output_even_if_an_artifact_record_names_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let parent = tokio::fs::canonicalize(dir.path()).await.unwrap();
+        let engine = Engine::open(parent.join("cleanup.db"), crate::Config::default())
+            .await
+            .unwrap();
+        let id = uuid::Uuid::new_v4();
+        let destination = parent.join(format!(".osdm-media-{id}-fixture.part.mkv"));
+        tokio::fs::write(&destination, b"published user output")
+            .await
+            .unwrap();
+        let job = SavedJob {
+            view: MediaJob {
+                id,
+                destination: destination.clone(),
+                description: None,
+                category_id: None,
+                state: MediaJobState::Completed,
+                children: vec![],
+                completed_segments: 1,
+                total_segments: 1,
+                sha256: None,
+                error: None,
+                removal_pending: false,
+            },
+            tracks: vec![SavedTrack {
+                sources: vec!["https://media.example.test/fixture.ts".into()],
+                container: TrackContainer::MpegTs,
+            }],
+            sources: vec![],
+            ffmpeg: parent.join("unused-ffmpeg.exe"),
+            directory: parent.join(format!(".osdm-media-{id}")),
+            marker: uuid::Uuid::new_v4().to_string(),
+            artifact: Some(destination.clone()),
+            ready: true,
+            length: Some(21),
+            subtitle: None,
+        };
+        owned_directory(&job).await.unwrap();
+        engine.inner.store.save_media_job(&job).await.unwrap();
+        engine.inner.data.lock().await.media_jobs.push(job);
+        assert!(engine.remove_completed_media_job(id, true).await.is_err());
+        assert_eq!(
+            tokio::fs::read(destination).await.unwrap(),
+            b"published user output"
+        );
+        assert!(engine.list_media_jobs().await[0].removal_pending);
         engine.shutdown().await.unwrap();
     }
 }

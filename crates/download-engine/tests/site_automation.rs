@@ -691,7 +691,7 @@ async fn schema_eight_policy_migration_is_transactional_and_old_binaries_reject_
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(version, 8);
+    assert_eq!(version, 9);
     assert!(
         !(0..=7).contains(&version),
         "revision-7 guard must refuse policy databases"
@@ -701,7 +701,7 @@ async fn schema_eight_policy_migration_is_transactional_and_old_binaries_reject_
         .await
         .unwrap();
     assert_eq!(marker, 1);
-    sqlx::query("PRAGMA user_version=9")
+    sqlx::query("PRAGMA user_version=10")
         .execute(&pool)
         .await
         .unwrap();

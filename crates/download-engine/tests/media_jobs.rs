@@ -46,6 +46,46 @@ fn request(origin: &str, directory: &Path) -> MediaJobRequest {
         direct_media: false,
     }
 }
+
+#[tokio::test]
+async fn subtitle_mime_conflicts_and_malformed_extensionless_tracks_fail_before_admission() {
+    let source = server(
+        Router::new()
+            .route(
+                "/conflict.srt",
+                get(|| async {
+                    (
+                        [("content-type", "text/vtt")],
+                        "WEBVTT\n\n00:00.000 --> 00:00.800\nFixture\n",
+                    )
+                }),
+            )
+            .route(
+                "/malformed",
+                get(|| async { ([("content-type", "text/vtt")], "not a subtitle document") }),
+            )
+            .route(
+                "/undeclared",
+                get(|| async { "WEBVTT\n\n00:00.000 --> 00:00.800\nFixture\n" }),
+            ),
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let engine = Engine::open(dir.path().join("subtitles.db"), Config::default())
+        .await
+        .unwrap();
+    for endpoint in ["conflict.srt", "malformed", "undeclared"] {
+        let mut req = request(&source.origin, dir.path());
+        req.direct_media = true;
+        req.url = format!("{}/never-fetched.mp4", source.origin);
+        req.subtitle_url = Some(format!("{}/{endpoint}", source.origin));
+        assert!(engine.create_media_job(req).await.is_err());
+        assert!(engine.list_media_jobs().await.is_empty());
+        assert!(engine.snapshot().await.is_empty());
+        assert!(!dir.path().join("output.mkv").exists());
+    }
+    engine.shutdown().await.unwrap();
+}
 async fn terminal(engine: &Engine, id: uuid::Uuid) -> download_engine::MediaJob {
     tokio::time::timeout(Duration::from_secs(30), async {
         loop {
@@ -715,8 +755,13 @@ async fn direct_mp4_can_attach_webvtt_and_publish_verified_mp4() {
                 }),
             )
             .route(
-                "/captions.vtt",
-                get(|| async { "WEBVTT\n\n00:00.000 --> 00:00.800\nCaption fixture\n" }),
+                "/captions",
+                get(|| async {
+                    (
+                        [("content-type", "text/vtt")],
+                        "WEBVTT\n\n00:00.000 --> 00:00.800\nCaption fixture\n",
+                    )
+                }),
             ),
     )
     .await;
@@ -725,7 +770,7 @@ async fn direct_mp4_can_attach_webvtt_and_publish_verified_mp4() {
         .unwrap();
     let mut req = request(&source.origin, dir.path());
     req.url = format!("{}/direct.mp4", source.origin);
-    req.subtitle_url = Some(format!("{}/captions.vtt", source.origin));
+    req.subtitle_url = Some(format!("{}/captions", source.origin));
     req.destination = dir.path().join("captions.mp4");
     req.ffmpeg_path = ffmpeg.clone();
     req.direct_media = true;
@@ -764,6 +809,54 @@ async fn direct_mp4_can_attach_webvtt_and_publish_verified_mp4() {
         assert!(probe.status.success());
         assert!(String::from_utf8_lossy(&probe.stdout).contains("mov_text"));
     }
+    assert!(engine.remove_completed_media_job(id, false).await.is_err());
+    let input_path = engine
+        .snapshot()
+        .await
+        .into_iter()
+        .find(|download| job.children.contains(&download.id))
+        .unwrap()
+        .destination;
+    let original_input = tokio::fs::read(&input_path).await.unwrap();
+    tokio::fs::write(&input_path, b"modified media input")
+        .await
+        .unwrap();
+    assert!(engine.remove_completed_media_job(id, true).await.is_err());
+    assert_eq!(
+        tokio::fs::read(&input_path).await.unwrap(),
+        b"modified media input"
+    );
+    tokio::fs::write(&input_path, &original_input)
+        .await
+        .unwrap();
+    let workspace = dir.path().join(format!(".osdm-media-{id}"));
+    let foreign = workspace.join("user-notes.txt");
+    tokio::fs::write(&foreign, b"user work").await.unwrap();
+    assert!(engine.remove_completed_media_job(id, true).await.is_err());
+    assert_eq!(tokio::fs::read(&foreign).await.unwrap(), b"user work");
+    assert_eq!(tokio::fs::read(&job.destination).await.unwrap(), output);
+    assert!(engine.list_media_jobs().await[0].removal_pending);
+    engine.shutdown().await.unwrap();
+    let engine = Engine::open(dir.path().join("direct.db"), Config::default())
+        .await
+        .unwrap();
+    assert!(engine.list_media_jobs().await[0].removal_pending);
+    assert!(engine.resume_media_job(id).await.is_err());
+    // Remove only the synthetic file this test created, never user data.
+    tokio::fs::remove_file(&foreign).await.unwrap();
+    // Simulate a crash after an owned input was unlinked but before its history
+    // row was removed: cleanup must remain retryable and never touch output.
+    tokio::fs::remove_file(&input_path).await.unwrap();
+    engine.remove_completed_media_job(id, true).await.unwrap();
+    assert!(engine.list_media_jobs().await.is_empty());
+    assert!(engine.snapshot().await.is_empty());
+    assert_eq!(tokio::fs::read(&job.destination).await.unwrap(), output);
+    let mut entries = tokio::fs::read_dir(workspace).await.unwrap();
+    assert_eq!(
+        entries.next_entry().await.unwrap().unwrap().file_name(),
+        "owner"
+    );
+    assert!(entries.next_entry().await.unwrap().is_none());
     engine.shutdown().await.unwrap();
 }
 
@@ -910,14 +1003,14 @@ async fn revision_five_upgrade_adds_media_ledger_and_rejects_old_admission_guard
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(version, 8);
+    assert_eq!(version, 9);
     assert!(!(0..=5).contains(&version));
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM media_jobs")
         .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(count, 0);
-    sqlx::query("PRAGMA user_version=9")
+    sqlx::query("PRAGMA user_version=10")
         .execute(&pool)
         .await
         .unwrap();

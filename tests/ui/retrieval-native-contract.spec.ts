@@ -14,9 +14,9 @@ declare global {
   interface Window { __retrievalIpc: IpcFixture }
 }
 
-async function bootstrap(page: Page, offers: Offer[] = []) {
+async function bootstrap(page: Page, offers: Offer[] = [], completed = false) {
   await page.emulateMedia({ reducedMotion: "reduce", colorScheme: "dark" });
-  await page.addInitScript((initialOffers) => {
+  await page.addInitScript(({ initialOffers, completed }) => {
     localStorage.setItem("osdm.settings", JSON.stringify({ state: { settings: {
       theme: "dark", onboarding_complete: true, desktop: { silent: true },
       default_directory: "C:\\FakeDownloads",
@@ -28,6 +28,7 @@ async function bootstrap(page: Page, offers: Offer[] = []) {
     let callbackId = 0;
     let eventId = 0;
     let offers = initialOffers;
+    let jobs = completed ? [{ id: "completed-job", destination: "C:\\FakeDownloads\\kept.mp4", state: "Completed", children: [], total_segments: 1, completed_segments: 1, sha256: null, error: null, removal_pending: false }] : [];
     const fixture: IpcFixture = {
       calls, unexpected,
       get pendingPaths() { return paths.length; },
@@ -58,7 +59,9 @@ async function bootstrap(page: Page, offers: Offer[] = []) {
             case "settings_save": case "engine_open": case "engine_shutdown":
             case "engine_cancel_inspection": case "plugin:event|unlisten": return;
             case "plugin:event|listen": return ++eventId;
-            case "engine_snapshot": case "engine_media_jobs": case "engine_site_projects": return [];
+            case "engine_snapshot": case "engine_site_projects": return [];
+            case "engine_media_jobs": return jobs;
+            case "engine_remove_completed_media_job": jobs = []; return;
             case "engine_automation": return { queues: [], schedules: [], membership: {} };
             case "power_status": return null;
             case "capture_status": case "desktop_autostart_status": return false;
@@ -69,6 +72,12 @@ async function bootstrap(page: Page, offers: Offer[] = []) {
             case "engine_enqueue": return "fixture-download";
             case "engine_create_media_job": return "fixture-media-job";
             case "engine_inspect_media":
+              if (args.format === "dash") return {
+                kind: "dash", segment_count: 2, resource_origins: ["https://media.example.test"], choices: [
+                  { url: args.url, bandwidth: "1400000", resolution: [1280, 720], codecs: "avc1", track_key: "video-1", track_kind: "video", segment_count: 1 },
+                  { url: "https://media.example.test/captions", bandwidth: "0", resolution: null, codecs: null, track_key: "subtitle-1", track_kind: "subtitle", language: "en", segment_count: 1 },
+                ],
+              };
               return args.url === "https://media.example.test/master.m3u8" ? {
                 kind: "master", choices: [{ url: "https://cdn.example.test/variant.m3u8", bandwidth: 1400000, resolution: [1280, 720], codecs: "avc1.64001f" }],
                 segment_count: 0, resource_origins: ["https://cdn.example.test"],
@@ -83,7 +92,7 @@ async function bootstrap(page: Page, offers: Offer[] = []) {
       },
       __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener() {} },
     });
-  }, offers);
+  }, { initialOffers: offers, completed });
   await page.goto("/");
   await expect.poll(() => commands(page, "engine_snapshot")).toHaveLength(1);
   await expect.poll(() => commands(page, "plugin:event|listen")).toHaveLength(2);
@@ -230,4 +239,31 @@ test("direct MP4 subtitle selection uses verified remux rather than ordinary adm
     subtitle_url: "https://captions.example.test/en.vtt", allowed_origins: ["https://captions.example.test"],
   } });
   expect(await commands(page, "engine_enqueue")).toEqual([]);
+});
+
+test("completed media cleanup requires explicit consent and preserves the output contract", async ({ page }) => {
+  await bootstrap(page, [], true);
+  await page.getByRole("button", { name: "Save media", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Save media", exact: true });
+  const cleanup = dialog.getByRole("button", { name: "Clean completed media job", exact: true });
+  await expect(cleanup).toBeDisabled();
+  await dialog.getByLabel("Completed job to clean", { exact: true }).selectOption("completed-job");
+  await expect(cleanup).toBeDisabled();
+  expect(await commands(page, "engine_remove_completed_media_job")).toEqual([]);
+  await dialog.getByRole("checkbox", { name: /I authorize removal of this job's intermediate files/ }).check();
+  await cleanup.click();
+  await expect.poll(() => commands(page, "engine_remove_completed_media_job")).toEqual([{ command: "engine_remove_completed_media_job", args: { id: "completed-job", confirmed: true } }]);
+  await expect(dialog).toContainText("Published output kept.");
+});
+
+test("DASH inspection exposes extensionless subtitle tracks without selecting them automatically", async ({ page }) => {
+  await bootstrap(page, [{ id: "dash-caption", kind: "dash", url: "https://media.example.test/movie.mpd", title: "DASH captions", subtitle_url: null }]);
+  await page.getByRole("button", { name: "Choose quality & destination", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Save media", exact: true });
+  await dialog.getByRole("button", { name: "Inspect manifest", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "Use en subtitle", exact: true })).toBeVisible();
+  await expect(dialog.getByLabel("Optional selected subtitle URL", { exact: true })).toHaveValue("");
+  await dialog.getByRole("button", { name: "Use en subtitle", exact: true }).click();
+  await expect(dialog.getByLabel("Optional selected subtitle URL", { exact: true })).toHaveValue("https://media.example.test/captions");
+  expect(await commands(page, "engine_create_media_job")).toEqual([]);
 });

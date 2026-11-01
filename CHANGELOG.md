@@ -35,6 +35,10 @@ All notable changes to OSDM are documented here. This project follows
   lifetime byte charges; schema 8 prevents older binaries from ignoring policy.
 - MP4/Matroska output selection and direct MP4/M4V/MOV subtitle remux, plus bounded
   media-processing admission, remux deadline and sampled output-size guards.
+- Scope-free bounded Site Grabber templates and exposed extensionless subtitle
+  endpoints validated by MIME and content rather than inferred from filenames.
+- Confirmed completed-media input/history cleanup with durable retryable removal
+  intent (schema 9), modified/foreign-file refusal and published-output preservation.
 
 ### Planned
 
@@ -42,7 +46,7 @@ All notable changes to OSDM are documented here. This project follows
 - Storage-aware reservations and duplicate detection.
 - Mirror benchmarking and failover.
 - Predictive scheduling and automatic file organization.
-- Live/DRM capture, automatic rendition discovery and media-job cleanup.
+- Live/DRM capture and external HLS playlist renditions.
 
 P3's bounded subset is implemented in source and tested; it is not claimed
 complete against every `PLAN.md` §6.4 bullet. See

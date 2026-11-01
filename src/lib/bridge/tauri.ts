@@ -101,6 +101,7 @@ export class TauriBridge implements EngineBridge {
   async dismissMediaOffer(id: string): Promise<void> { await this.invoke("media_dismiss_offer", { id }); }
   async createMediaJob(request: import("@/lib/retrieval").MediaJobRequest): Promise<string> { return this.invoke("engine_create_media_job", { request }); }
   async mediaJobs(): Promise<import("@/lib/retrieval").MediaJob[]> { return this.invoke("engine_media_jobs"); }
+  async removeCompletedMediaJob(id: string, confirmed: boolean): Promise<void> { await this.invoke("engine_remove_completed_media_job", { id, confirmed }); }
   async controlMediaJob(id: string, action: "pause" | "resume" | "cancel"): Promise<void> { await this.invoke("engine_control_media_job", { id, action }); }
   async createSiteProject(request: import("@/lib/site-retrieval").SiteProjectRequest): Promise<string> { return this.invoke("engine_create_site_project", { request }); }
   async siteProjects(): Promise<import("@/lib/site-retrieval").SiteProject[]> { return this.invoke("engine_site_projects"); }

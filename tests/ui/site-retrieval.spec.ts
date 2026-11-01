@@ -124,6 +124,26 @@ test("scope cannot expand to an unrelated directory", async ({ page }) => {
   await noInventedResults(dialog, page);
 });
 
+test("project templates apply bounded filters without authorizing a source or changing its destination", async ({ page }) => {
+  const dialog = await openSite(page);
+  await dialog.getByLabel("Project template", { exact: true }).selectOption("audio");
+  await budgetStep(dialog);
+  await expect(dialog.getByLabel("Allowed file extensions", { exact: true })).toHaveValue("mp3 m4a ogg opus flac wav");
+  await expect(dialog.getByLabel("Pages (1–1,000)", { exact: true })).toHaveValue("10");
+  const consent = dialog.getByRole("checkbox", { name: /I authorize anonymous exploration only/ });
+  await expect(consent).not.toBeChecked();
+  await consent.check();
+  await dialog.getByRole("button", { name: "Back", exact: true }).click();
+  await dialog.getByRole("button", { name: "Back", exact: true }).click();
+  await dialog.getByLabel("Project template", { exact: true }).selectOption("documents");
+  await expect(dialog.getByLabel("Starting page URL", { exact: true })).toHaveValue("https://site.example.test/manual/index.html");
+  await expect(dialog.getByLabel("Output folder", { exact: true })).toHaveValue("C:\\FakeDownloads\\manual");
+  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(consent).not.toBeChecked();
+  await expect(dialog.getByRole("button", { name: "Save project & explore", exact: true })).toBeDisabled();
+});
+
 for (const theme of ["dark", "light"] as const) {
   test(`${theme} site wizard source and budget steps are accessible`, async ({ page }) => {
     const dialog = await openSite(page);

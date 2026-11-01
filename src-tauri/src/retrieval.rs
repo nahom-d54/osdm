@@ -167,6 +167,20 @@ fn dash_view(plan: download_engine::media_capture::DashPlan) -> Reply<MediaInspe
 }
 
 #[tauri::command]
+pub(crate) async fn engine_remove_completed_media_job(
+    shell: State<'_, Shell>,
+    id: DownloadId,
+    confirmed: bool,
+) -> Reply<()> {
+    shell
+        .engine()
+        .await?
+        .remove_completed_media_job(id, confirmed)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub(crate) async fn engine_cancel_inspection(
     shell: State<'_, Shell>,
     request_id: String,

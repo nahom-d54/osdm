@@ -21,7 +21,7 @@ impl Store {
         let version: i64 = sqlx::query_scalar("PRAGMA user_version")
             .fetch_one(&pool)
             .await?;
-        if !(0..=8).contains(&version) {
+        if !(0..=9).contains(&version) {
             return Err(crate::Error::Invalid(
                 "database was created by a newer engine version".into(),
             ));
@@ -61,7 +61,8 @@ impl Store {
                 "unsupported site policy schema".into(),
             ));
         }
-        sqlx::query("PRAGMA user_version = 8")
+        // Revision 8 must not resume a job with durable removal intent.
+        sqlx::query("PRAGMA user_version = 9")
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
@@ -114,6 +115,14 @@ impl Store {
         sqlx::query("INSERT INTO media_jobs(id,payload) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload")
             .bind(job.view.id.to_string()).bind(serde_json::to_string(job)?)
             .execute(&self.0).await?;
+        Ok(())
+    }
+
+    pub async fn delete_media_job(&self, id: crate::MediaJobId) -> Result<()> {
+        sqlx::query("DELETE FROM media_jobs WHERE id=?")
+            .bind(id.to_string())
+            .execute(&self.0)
+            .await?;
         Ok(())
     }
 

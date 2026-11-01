@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { scopeFor, siteLimits, utcSiteSchedule } from "./site-retrieval.ts";
+import { scopeFor, siteLimits, utcSiteSchedule, SITE_TEMPLATES } from "./site-retrieval.ts";
 
 test("default scope stays at the explicit seed directory", () => {
   assert.equal(scopeFor("https://docs.example.test/manual/index.html?token=synthetic"), "/manual/");
@@ -17,4 +17,13 @@ test("site schedule is explicit UTC, bounded, and not normalized from invalid da
   assert.deepEqual(utcSiteSchedule("2100-01-01T04:00", "60"), { next_run: Date.parse("2100-01-01T04:00:00Z") / 1000, interval_seconds: 3600 });
   for (const value of ["2100-02-30T04:00", "2026-01-01T24:99", "not-a-date"]) assert.throws(() => utcSiteSchedule(value, "60"));
   for (const repeat of ["0", "-1", "1.5", "525601", "Infinity"]) assert.throws(() => utcSiteSchedule("2100-01-01T04:00", repeat));
+});
+
+test("project templates are bounded, distinct, and contain no authority or secrets", () => {
+  assert.equal(new Set(SITE_TEMPLATES.map((template) => template.id)).size, SITE_TEMPLATES.length);
+  for (const template of SITE_TEMPLATES) {
+    assert.ok(siteLimits(template).max_bytes > 0);
+    assert.match(template.extensions, /^[a-z0-9 ]+$/);
+    assert.deepEqual(Object.keys(template).sort(), ["id", "name", "extensions", "pages", "files", "mebibytes", "depth"].sort());
+  }
 });

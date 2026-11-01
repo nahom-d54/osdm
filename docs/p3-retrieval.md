@@ -11,6 +11,12 @@ for a bounded subset is not evidence for every bullet in `PLAN.md` §6.4.
 
 ## Implemented in source
 
+The supported-format implementation includes the media review/capture workflow,
+verified merge/publication and completed-input cleanup, plus the Site Grabber
+wizard/templates, selective or confirmed automatic retrieval, saved-project
+controls, scheduling, caching and filter continuation. The format exclusions below
+are explicit; source completion is not native/browser release validation.
+
 ### Media pipeline
 
 - `crates/media-capture` (offline, no network; parsers never write files):
@@ -56,6 +62,11 @@ for a bounded subset is not evidence for every bullet in `PLAN.md` §6.4.
   Pause/Resume/Cancel. Direct MP4/M4V/MOV sources can attach explicitly selected
   subtitles through the same verified remux pipeline. Merged output supports MP4
   or Matroska; unsupported direct remux formats fail explicitly.
+- Completed media jobs have an explicitly confirmed cleanup action. Durable
+  removal intent blocks resume; verified owned inputs, segment history and the
+  recorded merge anchor are removed individually. Modified/foreign files are
+  refused, the published output is never unlinked, and interrupted cleanup is
+  retryable after restart. A tiny workspace ownership marker remains.
 - Browser workflow: an explicit popup scan of the active page, a single chosen
   media item (optional player subtitle), persisted global/exact-site disable, and
   an authenticated native `offer_media` handoff. Nothing downloads automatically,
@@ -101,6 +112,9 @@ for a bounded subset is not evidence for every bullet in `PLAN.md` §6.4.
   revalidates with ETag, excludes private/no-store responses, and never caches
   robots or resource bodies or falls back to stale content on errors. Resource
   descriptions come from bounded plain link/player text.
+- Scope-free Documents, Images, Audio and Website resources templates seed finite
+  filters/budgets. They retain no source, destination, credentials or consent and
+  never enable scheduling or automatic downloads.
 
 ## Supported subset and explicit limits
 
@@ -111,20 +125,23 @@ for a bounded subset is not evidence for every bullet in `PLAN.md` §6.4.
   fragmented-MP4 tracks, with an explicit video and/or audio representation. Live,
   DRM, `SegmentTemplate`/`SegmentTimeline`, multiple periods and text tracks other
   than a single static VTT/SRT segment are rejected.
-- Subtitles are an explicitly chosen SRT/WebVTT source; there is no automatic
-  rendition discovery.
+- Exposed single-file DASH subtitle tracks and browser/player tracks are
+  discoverable but never automatically selected. Extensionless endpoints require
+  a supported subtitle MIME type; filename/MIME conflicts fail before remux.
+  External HLS playlist renditions remain unsupported.
 - No site adapters or headless browser, no forms/login, no JavaScript-heavy
   capture, no automatic site-wide capture.
 - Automatic mirroring saves matching known-size files as separate revisions; it
   does not rewrite HTML links into an offline website or replace unchanged files.
   Page/file/depth ceilings apply per exploration; byte accounting spans revisions.
-- Media jobs have no removal/cleanup API; workspaces and artifact identity anchors
-  are retained.
+- Cleanup covers fully stopped completed media jobs. Failed/canceled jobs retain
+  their inputs for recovery, and unrecorded stale merge attempts are not globbed
+  or deleted. Completed cleanup retains a tiny ownership marker.
 - FFmpeg is a trusted, explicitly configured local executable, not OS-sandboxed.
   At most two engine media-processing stages run concurrently (also bounded by
   global active-download configuration). Remux has a one-hour deadline, a sampled
   output-size guard and a per-allocation cap; these are not hard OS memory/CPU/disk
-  quotas. Merge artifacts remain retained without a cleanup command.
+  quotas. Explicit completed-job cleanup removes its recorded merge artifact.
 - Job and merged-file SHA-256 is locally computed, not publisher-authenticated.
 
 ## Acceptance evidence
@@ -146,7 +163,7 @@ pnpm exec playwright test
 Recorded 2026-11-01 on Windows with the locally installed
 `C:/apps/ffmpeg/bin/{ffmpeg,ffprobe}.exe`:
 
-- `cargo test --workspace`: **218 passed, 3 ignored** (one opt-in multi-gigabyte
+- `cargo test --workspace`: **220 passed, 3 ignored** (one opt-in multi-gigabyte
   transfer and two opt-in remux tests; both remux tests also passed explicitly).
 - Opt-in remux suite (`--test remux -- --ignored`): **2 passed** using real
   FFmpeg/ffprobe — generated MPEG-TS to Matroska with subtitle extraction and
@@ -155,8 +172,10 @@ Recorded 2026-11-01 on Windows with the locally installed
   a real FFmpeg-generated static DASH asset set downloaded through the engine and
   merged from explicitly selected `SegmentList` tracks; both verify exact output
   hash, racing-output preservation and no-overwrite publication.
-- Expanded media integration suite: **13 passed** with installed FFmpeg, including
+- Expanded media integration suite: **14 passed** with installed FFmpeg, including
   direct MP4 plus WebVTT remux, exact-output hash and ffprobe subtitle verification.
+  The engine unit suite also records **34 passed**, including a forged-artifact
+  cleanup regression that proves the published destination is never unlinked.
 - Site integration tests cover robots → HTML → metadata → review → hard-capped
   download, changed length, existing destination, real page/robots caps,
   pause/restart replay, shutdown drain, unconfirmed no-network creation,
@@ -164,10 +183,14 @@ Recorded 2026-11-01 on Windows with the locally installed
   selected payload with a matching validator.
 - `cargo clippy --workspace --all-targets -- -D warnings`: **pass**.
 - `cargo fmt --all -- --check` and `git diff --check`: **pass**.
-- `pnpm typecheck`: **pass**; `pnpm test`: **15 passed**;
+- `pnpm typecheck`: **pass**; `pnpm test`: **16 passed**;
   `pnpm test:extension`: **25 passed**; `pnpm build`: **pass** (existing
-  large-chunk advisory only); `pnpm exec playwright test`: **37 passed** including
+  large-chunk advisory only); `pnpm exec playwright test`: **40 passed** including
   the new media/site focus, mobile-width, fake-IPC and light/dark axe checks.
+- Completed-input cleanup coverage includes unconfirmed removal, modified input
+  and foreign-file refusal, restart with pending intent, interrupted partial
+  cleanup retry, and published-output preservation. UI tests cover explicit
+  cleanup consent, extensionless exposed subtitle selection, and template scope.
 - Nine Site Grabber automation integration tests cover durable/coalesced UTC
   decisions, startup behavior, command-only ownership, explicit automatic
   admission, concurrency ceilings, filter continuation, separate revisions,

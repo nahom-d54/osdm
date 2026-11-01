@@ -12,6 +12,14 @@ export interface SiteProjectRequest {
   confirmed: boolean;
 }
 
+/** Scope-free presets: never retain a source, destination, consent, or schedule. */
+export const SITE_TEMPLATES = [
+  { id: "documents", name: "Documents", extensions: "pdf txt epub doc docx odt", pages: "20", files: "100", mebibytes: "64", depth: "3" },
+  { id: "images", name: "Images", extensions: "png jpg jpeg gif webp svg avif", pages: "20", files: "200", mebibytes: "128", depth: "2" },
+  { id: "audio", name: "Audio", extensions: "mp3 m4a ogg opus flac wav", pages: "10", files: "50", mebibytes: "256", depth: "2" },
+  { id: "website", name: "Website resources", extensions: "pdf html htm png jpg svg css", pages: "20", files: "100", mebibytes: "64", depth: "3" },
+] as const;
+
 export interface SiteResource {
   id: string;
   url: string;

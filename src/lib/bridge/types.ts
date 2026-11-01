@@ -45,6 +45,7 @@ export interface EngineBridge {
   dismissMediaOffer(id: string): Promise<void>;
   createMediaJob(request: import("@/lib/retrieval").MediaJobRequest): Promise<string>;
   mediaJobs(): Promise<import("@/lib/retrieval").MediaJob[]>;
+  removeCompletedMediaJob(id: string, confirmed: boolean): Promise<void>;
   controlMediaJob(id: string, action: "pause" | "resume" | "cancel"): Promise<void>;
   createSiteProject(request: import("@/lib/site-retrieval").SiteProjectRequest): Promise<string>;
   siteProjects(): Promise<import("@/lib/site-retrieval").SiteProject[]>;

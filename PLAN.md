@@ -562,8 +562,9 @@ MPEG-TS HLS and static fragmented-MP4 DASH jobs with MP4/Matroska output,
 exact-output hashing and no-overwrite publication, optional validated SRT/WebVTT,
 direct MP4 subtitle remux and per-site disable are tested with installed FFmpeg.
 Still open:
-live/DRM capture, automatic rendition discovery, and manual production-stream
-playback review. See
+external HLS renditions/live/DRM support and manual production-stream playback
+review. Exposed single-file DASH/player subtitles, extensionless subtitle endpoints
+and confirmed completed-job cleanup are implemented. See
 [P3 scope and limits](docs/p3-retrieval.md).
 
 #### 6.4.2 Site Grabber
@@ -594,8 +595,8 @@ for explicit same-origin, path-scoped projects respecting robots policy. Confirm
 automatic retrieval, durable UTC schedules, periodic revision retrieval, bounded
 conditional HTML caching, per-project concurrency, resource descriptions and
 changed-filter continuation are implemented. Revisions retain old files; this is
-not HTML-link rewriting or in-place synchronization. Project templates and live
-native/browser validation remain open. Scope and policy are in
+not HTML-link rewriting or in-place synchronization. Scope-free, bounded project
+templates are implemented. Live native/browser validation remains open. Scope and policy are in
 [Site Grabber](docs/site-grabber.md); evidence is in
 [P3 retrieval](docs/p3-retrieval.md).
 

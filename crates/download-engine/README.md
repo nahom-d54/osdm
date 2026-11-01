@@ -69,8 +69,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
   same no-overwrite/recovery rules as ordinary downloads.
   Optional selected SRT/WebVTT is fetched boundedly from an approved origin and
   embedded. Jobs reopen paused; `pause/resume/cancel_media_job` are cancellable and
-  drained on shutdown. Live/DRM capture and automatic rendition discovery are not
-  implemented.
+  drained on shutdown. MP4/Matroska outputs and direct MP4/M4V/MOV subtitle remux
+  are supported. Exposed single-file DASH/player subtitles can use extensionless
+  endpoints with a supported MIME type; content validation is still mandatory.
+  External HLS playlist renditions and live/DRM capture remain unsupported.
+- `remove_completed_media_job` requires confirmation and fully stopped completed
+  work. It persists removal intent before unlinking individually validated inputs,
+  segment history and the recorded merge anchor; foreign/modified files are
+  refused and published output is never removed. Retry after an interruption;
+  `removal_pending` blocks resume. A tiny workspace marker remains.
 - `create_site_project`, `list_site_projects`, `control_site_project` and
   `queue_site_resources` implement bounded, resumable Site Grabber projects. One
   engine-budgeted request at a time, robots first, exact origin/path scope,
@@ -79,6 +86,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
   `deny_redirects` before dispatch, rejects credential/destination/source
   rewrites, skips synchronization and requires the exact final length. The byte
   budget covers discovery bodies plus reserved payload, not WAN retransmissions.
+- `configure_site_policy` adds confirmed automatic retrieval, per-project download
+  concurrency, durable UTC schedules/catch-up and bounded ETag-revalidated HTML
+  caching. `update_site_filters` keeps origin/path and lifetime charges, preserves
+  prior files and saves paused with unattended policy disabled. Rechecks retrieve
+  separate revisions, not in-place replacements or offline HTML-link rewriting.
 - `reorder` requires every history/queue ID exactly once.
 - `subscribe` provides full snapshots at up to 4 Hz. Refresh using `snapshot` after subscriber lag.
 - Zero bandwidth limit means unlimited; concurrency settings are fixed for an engine's lifetime.
@@ -121,15 +133,16 @@ The database contains full source URLs, including signed query strings. Do not p
 - Changing the bandwidth limit wakes existing throttle waits; low-speed transfers remain cancellable.
 - Durable segment layouts remain fixed while request sizes and active connections adapt. Dynamic work stealing is not implemented; instantaneous speed/ETA may fluctuate.
 - Server validators must be truthful. Last-Modified has weaker identity guarantees than strong ETags.
-- Schema revision 7 adds durable media-job and Site Grabber records plus
+- Schema revision 9 guards durable completed-media cleanup intent; revision 8
+  guards site automation, cache and revision accounting. Revision 7 added durable media-job and Site Grabber records plus
   restrictable child downloads; older binaries reject it rather than bypass media
   publication or site scope/byte guards. Revision 5 added durable
   queue/schedule/capture decisions, revision 4 organization metadata and custom
   working-directory ownership, and revision 3 integrity requirements. Revisions
-  0–6 migrate transactionally; newer revisions are rejected. Downgrading requires
+  0–8 migrate transactionally; newer revisions are rejected. Downgrading requires
   a compatible backup.
-- Media jobs keep their workspaces and completed artifact identity anchors; there
-  is no media-job removal/cleanup API yet. Merged SHA-256 is locally computed, not
+- Media jobs retain inputs/anchors until explicit completed-job cleanup; failed or
+  canceled jobs retain recovery data. Merged SHA-256 is locally computed, not
   publisher-authenticated. FFmpeg runs as a trusted local executable without an
   OS-level CPU/memory sandbox.
 
