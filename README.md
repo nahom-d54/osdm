@@ -72,7 +72,14 @@ Most downloads fail loudly for ordinary reasons: a server rate-limits a burst of
   the [CLI contract](crates/cli/README.md), and [browser setup](extension/README.md).
   Native/browser release gates remain open; this is not a P2 completion claim.
 
-The adaptive connection, recovery, and integrity foundation is implemented. Mirror intelligence, per-download priorities, storage reservations, duplicate detection, predictive scheduling, automatic organization, and media detection are planned in [the phased roadmap](docs/intelligent-downloads.md).
+- **P3 retrieval (source, bounded subset).** Explicit browser/desktop media
+  selection, budgeted HLS/static-DASH inspection, durable verified HLS→Matroska
+  capture with optional subtitles, and resumable, budgeted, robots-respecting Site
+  Grabber projects. DASH job downloads, live/DRM, scheduled site runs and caching
+  remain open. See [P3 scope and limits](docs/p3-retrieval.md) and the
+  [Site Grabber policy](docs/site-grabber.md).
+
+The adaptive connection, recovery, and integrity foundation is implemented. Mirror intelligence, per-download priorities, storage reservations, duplicate detection, predictive scheduling, and automatic organization are planned in [the phased roadmap](docs/intelligent-downloads.md).
 
 ## Install
 

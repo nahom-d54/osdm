@@ -8,16 +8,39 @@ All notable changes to OSDM are documented here. This project follows
 
 ### Added
 
-- Engine-owned bounded HLS manifest inspection with explicit redirect-origin
-  authorization, shared transfer budgets, cancellation and shutdown draining.
-  This is an inspection API, not completed P3 media capture or Site Grabber.
+- Engine-owned bounded HLS and static-DASH manifest inspection with explicit
+  redirect-origin authorization, shared transfer budgets, cancellation and
+  shutdown draining.
+- Durable media jobs for explicitly selected unencrypted MPEG-TS HLS VOD:
+  ordinary checkpointed segment transfers, local FFmpeg remux, independent decode,
+  synchronized SHA-256 verification and recoverable no-overwrite publication, with
+  optional validated SRT/WebVTT attachment and category/description metadata.
+- Offline bounded media planning: HLS averages/frame rate and VOD sequence,
+  conservative DASH `SegmentList` plans, and SRT/WebVTT validation.
+- Desktop **Save media** workflow with declared-quality selection, DASH
+  inspection, explicit origin approval, and engine-authoritative job controls.
+- Browser media panel: explicit active-page scan, one chosen offer with optional
+  player subtitle, global/exact-site disable, and authenticated `offer_media`
+  handoff without cookies or automatic capture.
+- Site Grabber: robots-respecting, same-origin, path-scoped exploration with
+  page/file/depth/byte budgets, resumable persisted projects, review-before-
+  download, and hard-capped child transfers (`max_bytes`, no redirects, no
+  credentials, exact final length).
+- Engine schema 7 adds durable media-job and Site Grabber records and rejects
+  older binaries rather than bypassing media publication or site guards.
 
 ### Planned
 
 - Dynamic bandwidth allocation with per-download priorities.
 - Storage-aware reservations and duplicate detection.
 - Mirror benchmarking and failover.
-- Predictive scheduling, automatic file organization, and media detection.
+- Predictive scheduling and automatic file organization.
+- DASH media-job downloads, live/DRM capture, scheduled Site Grabber runs and
+  response caching.
+
+P3's bounded subset is implemented in source and tested; it is not claimed
+complete against every `PLAN.md` §6.4 bullet. See
+[P3 scope and limits](docs/p3-retrieval.md).
 
 See [the phased roadmap](docs/intelligent-downloads.md) for acceptance gates.
 

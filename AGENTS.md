@@ -126,5 +126,7 @@ keys remain optional until signed updater artifacts are enabled.
 - Architecture and engine behavior: `crates/download-engine/README.md`
 - UI/engine contract: `docs/bridge-contract.md`
 - Roadmap and acceptance gates: `docs/intelligent-downloads.md`
+- P3 media/Site Grabber scope, limits and evidence: `docs/p3-retrieval.md`
+- Site Grabber safety policy: `docs/site-grabber.md`
 - Contribution expectations: `CONTRIBUTING.md`
 - Release history: `CHANGELOG.md`

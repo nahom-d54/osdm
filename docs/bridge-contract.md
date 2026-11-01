@@ -62,6 +62,17 @@ camelCase; nested Rust structs retain snake_case. Errors reject with a string.
 | `engine_update_destination` | `id: string, destination: string` | `()` |
 | `engine_set_credentials` | `id: string, credentials: { username, password } \| null` | `()` |
 | `engine_probe` | `url: string` | `ProbeInfo` |
+| `engine_inspect_media` | `url: string, allowedOrigins: string[], requestId: UUID, format?: "hls" \| "dash"` | `{kind, choices, segment_count, resource_origins}` |
+| `engine_cancel_inspection` | `requestId: UUID` | `()` |
+| `engine_create_media_job` | `request: {url, destination, allowed_origins, ffmpeg_path, description, subtitle_url?, category_id?, dash_tracks?}` | media job UUID |
+| `engine_media_jobs` | — | engine media job snapshots |
+| `engine_control_media_job` | `id: UUID, action: "pause" \| "resume" \| "cancel"` | `()` |
+| `media_offers` | — | session-only `{id, url, title, subtitle_url, kind}[]` |
+| `media_dismiss_offer` | `id: UUID` | `()` |
+| `engine_create_site_project` | `request: SiteProjectRequest` | project UUID |
+| `engine_site_projects` | — | `SiteProject[]` |
+| `engine_control_site_project` | `id: UUID, action: "pause" \| "resume" \| "cancel" \| "delete"` | `()` |
+| `engine_queue_site_resources` | `id: UUID, resources: string[]` | child download UUIDs |
 | `engine_pause`, `engine_resume`, `engine_retry`, `engine_cancel` | `id: string` | `()` |
 | `engine_update_url` | `id: string, url: string` | `()` |
 | `engine_reorder` | `ids: string[]` | `()` |
@@ -124,10 +135,51 @@ perform their own validation and retries.
 | --- | --- | --- |
 | `engine://snapshot` | `Download[]` | Full snapshots, changed snapshots forwarded at up to 4 Hz |
 | `engine://error` | string | Persistence/scheduler/desktop failures |
+| `media://offers-changed` | `()` | Session-only browser offers changed; reread `media_offers` |
 
 On Rust broadcast lag the shell obtains a fresh engine snapshot. The frontend
 also refreshes every five seconds. Unsubscribe remains safe when called before
 asynchronous listener registration finishes.
+
+### P3 media workflow
+
+**Save media** accepts an explicit HLS source or a direct media file. HLS master
+choices show manifest-declared resolution/bandwidth/codecs, never measured quality
+or an automatically selected variant. A selected variant must be inspected again
+before saving. Additional redirect/resource origins require explicit approval;
+neither manifests nor browser offers authorize credential forwarding.
+Choice `bandwidth` is decimal integer text (bits/second), preserving the exact
+manifest u64 value beyond JavaScript's safe-integer range. `resolution` is a
+two-number tuple or null; codecs are optional manifest-declared text.
+
+`format` selects HLS or conservative static-DASH inspection. DASH choices carry
+`track_key`, `track_kind` (`video`/`audio`/`subtitle`), `language` and
+`segment_count`; the manifest itself is never offered as a direct file. Sending a
+master playlist to `engine_create_media_job` is rejected, as is any segment,
+subtitle or redirect origin that was not explicitly approved.
+
+Media jobs support standalone unencrypted MPEG-TS HLS VOD merged into Matroska,
+with optional validated SRT/WebVTT embedding. DASH is inspection/selection only:
+its tracks cannot yet be queued as a media job. Live, event, encrypted/DRM,
+byte-range, initialization-map, template/timeline and external-rendition sources
+are rejected rather than silently altered. Job `sha256` is locally computed, not
+publisher-authenticated integrity.
+
+Inspection IDs support cancellation, including a bounded cancellation tombstone
+when cancellation arrives before native admission. Closing/changing the dialog
+invalidates late results. Media job controls delegate to the engine, and job
+counts/hashes/status come only from engine snapshots. The web mock explicitly
+rejects network media inspection/download rather than fabricating quality,
+segment progress or merge integrity.
+
+The extension's authenticated `offer_media` operation only queues a bounded,
+session-only source/title/optional-subtitle offer and shows the desktop window.
+It never downloads until the user chooses quality and destination in the app.
+Offers contain secret-bearing URLs and must not be logged or persisted as
+analytics. Disabled/missing helpers leave browser playback untouched. The popup
+uses existing active-tab/scripting permissions and requires an explicit scan and
+single-item choice; global and exact-site media detection toggles are independent
+of automatic ordinary-download capture.
 
 ## 3. Native shell behavior — available
 
@@ -370,6 +422,32 @@ policy, timing, and safe status text. Duplicate identity is normalized URL and
 canonical destination/checksum, not filename/size or inferred content identity.
 Batch admits 1–1,000 items independently, reports partial failures, and retains an
 ID even if a later assignment/resume fails. Retry does not create another entry.
+
+Schema **6** adds the durable media-job ledger and schema **7** adds persisted Site
+Grabber projects plus restrictable child downloads. Both migrate revisions 0–5 in
+one transaction; older binaries reject revision 6/7 rather than bypass media
+publication or site byte/scope guards. A site child persists `max_bytes` and
+`deny_redirects` before dispatch, refuses credentials/destination/source rewrites,
+skips synchronization, and requires an exact final length. Back up application
+data before downgrading binaries.
+
+### Site Grabber workflow
+
+`engine_create_site_project` persists an explicit, confirmed project (one origin,
+directory prefix, extension/exclusion filters, page/file/byte/depth ceilings) as
+paused intent. Resume fetches the origin's robots policy first and explores with
+one engine-budgeted request at a time; redirects are validated before the next
+request, and credentials are never forwarded. `SiteProject.state` moves
+`Paused → Exploring → Ready | Failed | Canceled`. Saved projects open and delete
+without deleting published files; restart never resumes a crawl automatically.
+
+Discovered files stay review-only and carry `size: null` until an engine-owned
+HEAD returns an exact length; unknown lengths cannot be selected. Queueing a
+reviewed set reserves each exact payload and admits an ordinary hard-capped
+download through the normal transfer/checkpoint/publication path. The byte limit
+is a payload/storage budget (discovery bodies plus reserved file payload), not a
+metered WAN retransmission quota, so ordinary resume and retries keep working.
+`engine://snapshot` remains authoritative for child progress.
 
 `Engine::prepare_capture` atomically inserts a paused download with a 30-second
 lease. Ordinary resume/queue start cannot admit that lease. Commit consumes the
