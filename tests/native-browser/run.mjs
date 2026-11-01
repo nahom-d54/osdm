@@ -7,6 +7,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import webExt from "web-ext";
 import { chromium } from "@playwright/test";
+import { stageExtension } from "../../extension/release.mjs";
 
 if (process.platform !== "win32") throw new Error("This registration harness currently requires Windows");
 const options = Object.fromEntries(process.argv.slice(2).reduce((pairs, value, i, all) => i % 2 ? pairs : [...pairs, [value.replace(/^--/, ""), all[i + 1]]], []));
@@ -64,8 +65,8 @@ async function launchApp() {
   }, "isolated app endpoint");
 }
 function preflightBinary(exe, framed) {
-  const result = spawnSync(exe, ["--native-test-info"], { cwd: root, env, input: Buffer.alloc(0), timeout: 10000 });
-  check(result.status === 0 && result.stdout?.length, "Native-test diagnostic failed; build current debug binaries first");
+  const result = spawnSync(exe, ["--native-test-info"], { cwd: root, env, input: Buffer.alloc(0), timeout: 30000 });
+  check(result.status === 0 && result.stdout?.length, `Native-test diagnostic failed for ${path.basename(exe)} (${result.error?.code ?? result.status}); build current debug binaries first`);
   const bytes = result.stdout;
   const text = framed ? bytes.subarray(4, 4 + bytes.readUInt32LE(0)).toString() : bytes.toString().trim();
   check(JSON.parse(text).native_test === true, "Refusing to run a binary without debug isolation");
@@ -88,27 +89,45 @@ function serveBytes(request, response, target = false) {
   const timer = setInterval(() => { response.write(body.subarray(offset, offset + 4096)); offset += 4096; if (offset >= body.length) { clearInterval(timer); response.end(); } }, 100);
   response.on("close", () => clearInterval(timer));
 }
-const secondary = http.createServer((req, res) => serveBytes(req, res, true));
+const secondary = http.createServer((req, res) => {
+  if (req.url === "/embedded-player") {
+    res.setHeader("Content-Type", "text/html");
+    res.end('<title>Embedded blob player</title><video id="player"></video><script>player.src=URL.createObjectURL(new Blob(["synthetic, not played"],{type:"video/mp4"}));fetch("/manifest-endpoint");</script>');
+    return;
+  }
+  if (req.url === "/manifest-endpoint") {
+    res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
+    res.end("#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\nsegment.ts\n#EXT-X-ENDLIST\n");
+    return;
+  }
+  serveBytes(req, res, true);
+});
 await new Promise((resolve) => secondary.listen(0, "127.0.0.1", resolve));
 const server = http.createServer(async (req, res) => {
   try {
   const url = new URL(req.url, "http://127.0.0.1");
   res.setHeader("Access-Control-Allow-Origin", "*"); res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") { res.end(); return; }
-  if (url.pathname === "/report") {
+   if (url.pathname === "/report") {
     let bytes = "";
     for await (const chunk of req) { bytes += chunk; if (bytes.length > 8192) { res.writeHead(413).end(); return; } }
     const event = JSON.parse(bytes);
     if (event.nonce !== nonce) { res.writeHead(403).end(); return; }
     stages.set(`${event.target}:${event.stage}`, true);
     results.push({ target: event.target, stage: event.stage, ...(typeof event.detail === "string" ? { detail: event.detail.slice(0, 250) } : {}) }); res.end("ok"); return;
-  }
+   }
+   if (url.pathname === "/media-player") {
+     res.setHeader("Content-Type", "text/html");
+     res.end(`<title>Network media fixture</title><iframe src="http://127.0.0.1:${secondary.address().port}/embedded-player"></iframe>`);
+     return;
+   }
   if (url.pathname.startsWith("/control/")) { res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify({ phase: phases.get(url.pathname.split("/").at(-1)) ?? "initial" })); return; }
   if (url.pathname.endsWith("-private.bin")) {
     if (req.headers.cookie !== "session=native-fixture" || req.headers.authorization !== "Bearer native-fixture") { res.writeHead(401).end(); return; }
     res.writeHead(302, { Location: `http://127.0.0.1:${secondary.address().port}/fixture.bin` }); res.end(); return;
   }
-  serveBytes(req, res);
+   if (url.pathname.endsWith("-endpoint")) res.setHeader("Content-Disposition", `attachment; filename="${url.pathname.slice(1)}.exe"`);
+   serveBytes(req, res);
   } catch { if (!res.headersSent) res.writeHead(400); res.end(); }
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -118,12 +137,17 @@ const key = publicKey.export({ type: "spki", format: "der" });
 const chromeId = [...createHash("sha256").update(key).digest().subarray(0, 16)].map((v) => String.fromCharCode(97 + (v >> 4), 97 + (v & 15))).join("");
 
 async function prepareExtension(target) {
-  const source = path.join(root, `${target}-extension`); await fs.mkdir(source);
-  for (const name of ["background.js", "rules.js", "modifiers.js", "options.html", "options.js", "icon.svg"]) await fs.copyFile(path.join(repo, "extension", name), path.join(source, name));
+  const source = path.join(root, `${target}-extension`);
+  const sourceManifest = JSON.parse(await fs.readFile(path.join(repo, `extension/manifest.${target}.json`), "utf8"));
+  await stageExtension(target, sourceManifest.version, source, target === "chromium" ? key.toString("base64") : undefined);
   const manifest = JSON.parse(await fs.readFile(path.join(repo, `extension/manifest.${target}.json`), "utf8"));
   if (target === "chromium") { manifest.key = key.toString("base64"); manifest.background.service_worker = "native-smoke.js"; }
   else manifest.background.scripts = ["native-smoke.js"];
-  manifest.host_permissions = ["http://127.0.0.1/*"];
+  manifest.host_permissions = ["http://*/*", "https://*/*"];
+  // Test-only grant in disposable copies: real builds request this permission
+  // from the popup user gesture and default network discovery to off.
+  manifest.permissions.push("webRequest", "cookies");
+  manifest.optional_permissions = manifest.optional_permissions.filter((permission) => !["webRequest", "cookies"].includes(permission));
   const config = { target, nonce, base, sha256 };
   const smoke = `globalThis.OSDM_NATIVE_SMOKE=${JSON.stringify(config)};\n${await fs.readFile(path.join(repo, "tests/native-browser/smoke.js"), "utf8")}`;
   await fs.writeFile(path.join(source, "native-smoke.js"), smoke);
@@ -148,8 +172,12 @@ async function launchBrowser(target, source) {
         ignoreDefaultArgs: ["--disable-extensions"],
         args: ["--no-first-run", "--no-default-browser-check", "--enable-unsafe-extension-debugging"],
       });
-      runner = { exit: () => context.close() };
+      runner = { exit: () => context.close(), context };
       const session = await context.browser().newBrowserCDPSession();
+      // Playwright normally forces GUID filenames (allowAndName), bypassing
+      // normal filename determination. Exercise actual Content-Disposition and
+      // extension filename events with the disposable profile's download prefs.
+      await session.send("Browser.setDownloadBehavior", { behavior: "default" });
       await session.send("Extensions.loadUnpacked", { path: source });
       // An already-installed MV3 extension need not start its worker at browser
       // launch. A real extension message wakes the persisted listener reliably.
@@ -166,6 +194,31 @@ async function launchBrowser(target, source) {
 }
 async function stage(target, name) {
   await waitFor(() => { check(!stages.has(`${target}:failed`), `${target} reported a native test failure`); return stages.has(`${target}:${name}`); }, `${target} ${name}`);
+}
+async function verifyNetworkMedia() {
+  const context = runner.context;
+  const popup = await context.newPage();
+  await popup.goto(`chrome-extension://${chromeId}/options.html`);
+  await popup.evaluate(() => chrome.storage.local.set({ networkMediaEnabled: true }));
+  const page = await context.newPage();
+  await page.goto(`${base}/media-player`);
+  await page.bringToFront();
+  let diagnostic;
+  try {
+    await waitFor(async () => {
+      diagnostic = await popup.evaluate(async () => {
+        const reply = await chrome.runtime.sendMessage({ op: "scan_media" });
+        const { networkMedia } = await chrome.storage.session.get({ networkMedia: {} });
+        return { reply, cached: Object.values(networkMedia).reduce((sum, entry) => sum + entry.entries.length, 0), permitted: await chrome.permissions.contains({ permissions: ["webRequest"], origins: ["http://*/*", "https://*/*"] }) };
+      });
+      return diagnostic.reply?.offers?.some((offer) => offer.kind === "HLS" && offer.url.endsWith("/manifest-endpoint"));
+    }, "extensionless manifest discovery from an embedded blob/JS player", 15000);
+  } catch (error) {
+    results.push({ target: "chromium", stage: "network_diagnostic", detail: JSON.stringify({ cached: diagnostic?.cached, permitted: diagnostic?.permitted, ok: diagnostic?.reply?.ok, error: diagnostic?.reply?.error, offers: diagnostic?.reply?.offers?.length }) });
+    throw error;
+  }
+  results.push({ target: "chromium", stage: "embedded_blob_network_discovery_pass" });
+  await popup.close(); await page.close();
 }
 async function verifyFile(file) {
   await waitFor(async () => { try { return createHash("sha256").update(await fs.readFile(file)).digest("hex") === sha256; } catch { return false; } }, "byte-exact fixture publication");
@@ -202,6 +255,8 @@ try {
     await launchBrowser(target, source);
     await stage(target, "initial_pass");
     await verifyFile(path.join(data, "downloads", `native-${target}-auto.bin`));
+    await verifyFile(path.join(data, "downloads", `native-${target}-endpoint.exe`));
+    if (target === "chromium") await verifyNetworkMedia();
     await kill(app); phases.set(target, "offline");
     await stage(target, "offline_pass");
     await launchApp(); phases.set(target, "reconnect");

@@ -70,6 +70,7 @@ export class TauriBridge implements EngineBridge {
   async enableCapture(enabled: boolean): Promise<void> { return this.invoke("capture_enable", { enabled }); }
   async browserSetupStatus(): Promise<import("@/lib/browser-setup").BrowserSetupStatus> { return this.invoke("browser_setup_status"); }
   async registerBrowserHelper(browser: import("@/lib/browser-setup").BrowserTarget, extensionId: string, confirmed: boolean): Promise<void> { await this.invoke("browser_setup_register", { browser, extensionId, confirmed }); }
+  async setBrowserIdentities(browser: import("@/lib/browser-setup").BrowserTarget, extensionIds: string[], confirmed: boolean): Promise<void> { await this.invoke("browser_setup_set_identities", { browser, extensionIds, confirmed }); }
   async unregisterBrowserHelper(browser: import("@/lib/browser-setup").BrowserTarget, confirmed: boolean): Promise<void> { await this.invoke("browser_setup_unregister", { browser, confirmed }); }
   async openExtensionStore(browser: import("@/lib/browser-setup").BrowserTarget): Promise<void> { await this.invoke("browser_setup_open_store", { browser }); }
   async openExtensionFiles(browser: import("@/lib/browser-setup").BrowserTarget): Promise<void> { await this.invoke("browser_setup_open_files", { browser }); }

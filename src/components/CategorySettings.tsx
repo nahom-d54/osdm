@@ -4,6 +4,7 @@ import { Field, ErrorNote } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { getBridge } from "@/lib/bridge";
 import type { Category } from "@/lib/categories";
+import { DEFAULT_CATEGORIES } from "@/lib/categories";
 import { useSettings } from "@/store/settings";
 
 export function CategorySettings() {
@@ -26,6 +27,13 @@ export function CategorySettings() {
   return (
     <section className="flex flex-col gap-3">
       <h3 className="eyebrow">Categories</h3>
+      <Button size="sm" variant="outline" onClick={() => {
+        const current = useSettings.getState().settings.categories;
+        update({ categories: [...current.map((category) => {
+          const preset = DEFAULT_CATEGORIES.find((preset) => preset.id === category.id);
+          return preset ? { ...category, extensions: [...new Set([...category.extensions, ...preset.extensions])] } : category;
+        }), ...DEFAULT_CATEGORIES.filter((preset) => !current.some((category) => category.id === preset.id)).map((preset) => ({ ...preset, extensions: [...preset.extensions], domains: [] }))] });
+      }}>Add missing built-in file types</Button>
       <p className="text-xs text-muted-foreground">
         Exact source domains take precedence over extensions. First category
         wins ties. Unmatched files use General and the default folder. Changes

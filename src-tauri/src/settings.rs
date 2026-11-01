@@ -127,11 +127,37 @@ pub struct Category {
 
 fn default_categories() -> Vec<Category> {
     [
-        ("music", "Music", "mp3 flac wav ogg m4a"),
-        ("video", "Video", "mp4 mkv webm avi mov"),
-        ("programs", "Programs", "exe msi msix deb rpm"),
-        ("documents", "Documents", "pdf txt doc docx epub"),
-        ("compressed", "Compressed", "zip 7z rar tar gz bz2 xz zst"),
+        (
+            "music",
+            "Music",
+            "mp3 flac wav ogg m4a aac opus wma aiff alac",
+        ),
+        (
+            "video",
+            "Video",
+            "mp4 mkv webm avi mov m4v mpg mpeg wmv flv ogv 3gp ts",
+        ),
+        (
+            "programs",
+            "Programs",
+            "exe msi msix deb rpm msixbundle appx appxbundle apk aab dmg pkg iso img",
+        ),
+        (
+            "documents",
+            "Documents",
+            "pdf txt doc docx epub mobi azw3 rtf odt xls xlsx ods csv ppt pptx odp",
+        ),
+        (
+            "compressed",
+            "Compressed",
+            "zip 7z rar tar gz bz2 xz zst tar.gz tar.xz tgz tbz2 cab",
+        ),
+        (
+            "images",
+            "Images",
+            "jpg jpeg png gif webp avif svg tif tiff bmp psd ai",
+        ),
+        ("fonts", "Fonts", "ttf otf woff woff2 eot"),
     ]
     .into_iter()
     .map(|(id, name, extensions)| Category {

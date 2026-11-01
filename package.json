@@ -1,7 +1,7 @@
 {
   "name": "osdm-ui",
   "private": true,
-  "version": "0.1.4-alpha.1",
+  "version": "0.1.4-alpha.2",
   "type": "module",
   "scripts": {
     "tauri": "tauri",
@@ -13,6 +13,8 @@
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test src/lib/*.test.mjs",
     "test:extension": "node --test extension/*.test.mjs",
+    "extension:build": "node extension/prepare.mjs",
+    "extension:dev": "vite --config extension/vite.config.mjs",
     "test:native-browser": "powershell -NoProfile -ExecutionPolicy Bypass -File tests/native-browser/run.ps1",
     "test:ui": "pnpm build && playwright test",
     "preview": "vite preview"

@@ -14,6 +14,47 @@ All notable changes to OSDM are documented here. This project follows
 - Predictive scheduling and automatic file organization.
 - Live/DRM capture and HLS fMP4/raw-ADTS renditions.
 
+## [0.1.4-alpha.2] - 2026-11-01
+
+Browser capture and setup fixes. Store publication remains deferred: extension
+files still need browser-approved manual loading. Reload updated extension files;
+updating the desktop alone does not update an unpacked extension.
+
+### Added
+
+- React/Vite extension UI with hash-routed Capture, Video, Rules and Connect
+  pages, OSDM typography, light/dark themes and a permission-gated floating video
+  control with explicit source selection and desktop review.
+- Automatic URL-matching login cookies for HTTPS file captures, enabled by default
+  with a global opt-out and a browser permission grant when enabling capture.
+  Values remain session-only and origin-scoped; unsafe cookie contexts stay in
+  the browser. There is no per-site preapproval list.
+- Tabbed desktop Settings, a consented add/edit/remove extension-ID list per
+  browser, expanded capture suffixes, Images/Fonts categories and an explicit
+  action to add new built-in category types without replacing customized folders.
+- OSDM logo icons for browser toolbars, extension management and the capture popup.
+- Opt-in browser response-metadata discovery for HTTP-backed blob/JavaScript
+  players and embedded frames, all-permitted-frame scanning, session-only bounded
+  offers and explicit site permissions. Local-only blobs/DRM remain unsupported.
+- Consented Windows installer helper setup for Chrome, Edge, Brave, Chromium and
+  Firefox, ownership-checked silent upgrade repair and uninstall cleanup, without
+  starting the engine or enabling capture.
+- Stable public-key identities for packaged unpacked extensions, automatic helper
+  ID configuration, selected-browser store launch and an advanced-only manual
+  fallback and an opt-in store-ready metadata check. Store publication is deferred;
+  actual publisher submission/approval remains external and is not claimed here.
+
+### Fixed
+
+- Automatic file capture recognizes browser-reported/late EXE filenames for
+  extensionless endpoints; Chrome's filename callback waits for the handoff.
+  The popup explains disabled interception and recent handoff failures.
+- Native-browser test cleanup now decodes saved registrations correctly on
+  Windows PowerShell 5.1 and verifies restored values. Previously it could report
+  success while leaving disposable test hosts behind, blocking guided setup.
+- Reconnect recognizes owned registrations after installation moves, migrates
+  legacy script registrations, and preserves other authorized profile IDs.
+
 ## [0.1.4-alpha.1] - 2026-11-01
 
 Differentiated retrieval and guided browser setup preview. Back up application

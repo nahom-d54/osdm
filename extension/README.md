@@ -1,8 +1,10 @@
 # OSDM browser capture — source implementation
 
 Chromium Manifest V3 and Firefox Manifest V3 targets. Automatic interception is
-**off by default** in both the extension and desktop app. No browser credential
-store is read by ordinary capture. This is not a store-published/signed extension;
+**off by default** in both the extension and desktop app. Once capture is enabled,
+URL-matching login cookies are included for HTTPS file captures by default, with a
+global opt-out and a one-time browser permission grant. No entire cookie store is
+exported. This is not a store-published/signed extension;
 full real-browser update, permission and cancellation validation remains a
 release gate in [P2 validation](../docs/p2-validation.md).
 
@@ -12,11 +14,13 @@ release gate in [P2 validation](../docs/p2-validation.md).
 
 Installed builds made with `pnpm desktop:build` include the native helper and
 allowlisted extension files. Open **Set up browser extension** from onboarding,
-Settings, or Capture & queues. Choose a browser, install/load the extension with
-browser approval, confirm per-user helper registration, enable local integration
+Settings, or Capture & queues. The Windows installer offers per-user helper setup
+for Chrome, Edge, Brave, Chromium and Firefox. Choose a browser, approve extension
+installation, connect the helper if installer setup was skipped, enable local integration
 and click **Check connection** in the extension popup. There is no administrator
 elevation or silent extension installation. Foreign registrations are refused;
-owned ones can be removed with a separate confirmation.
+owned ones can be removed with a separate confirmation or by uninstalling. Packaged
+extension IDs are stable and configured automatically; no ID copying is needed.
 
 No published store listing is configured by default, so the UI explains manual
 loading instead of opening a placeholder link. See [guided setup and packaging
@@ -28,13 +32,17 @@ resource builds and validation limits.
 1. Build/open the desktop app. Build helpers with:
    `cargo build --release -p osdm-browser-bridge -p osdm-cli`.
     Release workflows also package these in a separate capture-tools archive.
-    The desktop build wrapper bundles the native helper, but neither build path
-    silently registers a host or installs a browser extension.
-2. Run `./extension/prepare.ps1 -Browser chromium` and load `extension/unpacked`
+    The desktop build wrapper bundles the native helper. Building never registers
+    hosts; interactive installer setup requires consent and never installs an
+    extension silently.
+2. Run `pnpm install`, then `./extension/prepare.ps1 -Browser chromium -Output unpacked-0.1.1` and load `extension/unpacked-0.1.1`
    as an unpacked extension from Chrome/Edge's extensions page (developer mode).
    For Firefox use `-Browser firefox -Output unpacked-firefox` and temporarily load
    that folder's manifest through `about:debugging`. Release Firefox installation
    requires Mozilla signing; temporary extensions do not survive browser restart.
+   Preparation now compiles the React/Vite popup and requires a fresh output
+   directory; do not load the raw source manifest as an extension. Cross-platform
+   equivalent: `pnpm extension:build chromium <fresh-output-directory>`.
 3. Copy the actual Chromium extension ID. Register the native helper explicitly:
 
    ```powershell
@@ -79,6 +87,78 @@ Linux native host registration has not been interactively validated here.
 
 ## Explicit page-media offers
 
+### Capture desk UI and floating video control
+
+The extension popup is React 19/Vite with hash-routed **Capture**, **Video**,
+**Rules** and **Connect** pages, local light/dark theme choice, the OSDM logo and
+the desktop's typography/color tokens. Production bundles contain only local
+compiled UI assets; Vite/React source, dev servers and source maps are not shipped.
+`pnpm extension:dev` runs the Vite development entry; ordinary browser preview
+explains that native extension APIs are unavailable instead of faking a connection.
+
+In **Video**, enable **Floating video download button**, approve site access and
+reload existing pages. A bounded isolated-world script places a small control next
+to a playing, visible non-DRM video. A real user click opens source selection;
+**Review in OSDM** sends one choice, with a one-use 60-second tab/frame-bound token.
+It never patches playback or accepts a source URL supplied by a web page. Disabling
+the setting removes existing controls and unregisters future injections. Discovery
+can still require **Network media discovery** for blob/embedded players.
+
+### HTTP-backed blob/JavaScript/frame players
+
+Click **Enable network media discovery**, approve optional site/webRequest access,
+reload the page, start playback, then **Scan current page**. This observes actual
+response URLs/content types, including extensionless manifests fetched by hidden
+JavaScript or an embedded frame. It does not inspect cookies, request headers,
+response bodies or page variables. URLs stay in bounded extension-session memory;
+offers expire after five minutes and navigation/disable clears the cache. Scans
+also inspect frames where the browser permits script access, without changing playback.
+
+A `blob:` URL itself is not handed to the engine. There must be a real supported
+HTTP(S) source behind it; wholly local/generated blobs, DRM and browser-restricted
+pages remain unsupported. Discovery does not add live/DRM or new streaming formats.
+
+### Automatic file interception
+
+Automatic interception remains **off by default**. Enable local integration in
+OSDM, then enable **Capture eligible browser downloads** at the top of the extension
+popup. The switch saves immediately; **Save rules** applies suffix/exclusion edits.
+Use **Check connection**. EXE matching now uses Chrome/Firefox's
+reported filename as well as the URL suffix, so `Content-Disposition` downloads
+from extensionless endpoints can be captured. Late filename events are handled;
+Chrome's filename callback waits for the handoff, avoiding premature finalization
+of small files. The popup reports recent handoff failures without recording URLs.
+
+The transport is extension → browser native messaging → packaged native helper →
+authenticated random IPv4 loopback endpoint in the app (`127.0.0.1`, not a public
+listener). Missing/disabled helpers leave the browser downloader available. Files
+are canceled in the browser only after OSDM has persisted a prepared capture.
+
+**Include login cookies** defaults on for automatic HTTPS file captures. Enabling
+capture requests the browser's cookies/HTTPS site permission once, not approval
+for each site. Turn this switch off to capture without automatically reading any
+cookies. Existing enabled installations may need **Allow automatic cookie access**
+after updating. Permission refusal/revocation keeps matching downloads in the
+browser rather than silently dropping credentials. Cookie lookup is only for the
+exact download URL and known browser/container store; cookies are bounded, never
+written to extension storage or SQLite, and the engine strips them across origins.
+Unidentified private stores and partitioned contexts fail closed. Sharing is not
+applied to HTTP, media-manifest inspection/jobs or to other-origin redirects.
+Media inspection/jobs remain unauthenticated; discovering a media URL does not
+promise that an authenticated stream can be fetched by the engine.
+
+The default capture list now includes modern application packages, archives,
+documents, audio/video, images and fonts. **Rules → Use built-in file types** opts
+existing installations into the expanded list without silently replacing custom
+rules. Desktop **Settings → Categories → Add missing built-in file types** merges
+the expanded built-ins and Images/Fonts categories while retaining custom folders,
+names and domain rules.
+
+Reload the updated extension files to use these changes; installing a new desktop
+build alone does not update an already loaded unpacked extension. If moving from
+old keyless files to the stable-key package changes its ID, remove the obsolete
+extension copy rather than enabling automatic capture in two copies.
+
 Open the extension popup on an HTTP(S) page and click **Scan current page**.
 Start playback and scan again to inspect newly loaded resources. Choose one
 source and, optionally, one subtitle belonging to that same player, then click
@@ -107,8 +187,11 @@ DRM, blob-only players, inaccessible/cross-origin frames, shadow DOM, and sites
 that hide sources in JavaScript are unsupported. Resource timing may not expose
 extensionless manifests. This is discovery, not a DRM or access-control bypass.
 
-The background accepts media commands only from the exact extension popup URL
-and extension ID, with no content-script tab sender. A scan registers candidates
+The background accepts popup media commands only from its own `options.html`
+document (including hash routes) and extension ID; tab-opened extension UI also
+requires the browser-reported extension origin. Floating controls use separate
+messages and tab/frame-bound one-use tokens; webpage URLs/headers are ignored.
+A scan registers candidates
 in memory; an offer selects only one registered index, never a caller-supplied
 URL. Navigation or extension-worker restart requires a new scan. The native wire
 request is `{op:"offer_media",url,title,subtitle_url?}`; success requires

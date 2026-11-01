@@ -91,10 +91,11 @@ camelCase; nested Rust structs retain snake_case. Errors reject with a string.
 | `settings_load` | — | `AppSettings` or `null` |
 | `settings_save` | `settings: AppSettings` | `()` |
 | `browser_setup_status` | — | `BrowserSetupStatus` |
-| `browser_setup_register` | `browser: "chrome" \| "edge" \| "firefox", extensionId: string, confirmed: boolean` | `()` |
-| `browser_setup_unregister` | `browser: "chrome" \| "edge" \| "firefox", confirmed: boolean` | `()` |
-| `browser_setup_open_store` | `browser: "chrome" \| "edge" \| "firefox"` | `()` |
-| `browser_setup_open_files` | `browser: "chrome" \| "edge" \| "firefox"` | `()` |
+| `browser_setup_register` | `browser: "chrome" \| "edge" \| "brave" \| "chromium" \| "firefox", extensionId: string, confirmed: boolean` | `()` |
+| `browser_setup_set_identities` | `browser: "chrome" \| "edge" \| "brave" \| "chromium" \| "firefox", extensionIds: string[], confirmed: boolean` | `()` |
+| `browser_setup_unregister` | `browser: "chrome" \| "edge" \| "brave" \| "chromium" \| "firefox", confirmed: boolean` | `()` |
+| `browser_setup_open_store` | `browser: "chrome" \| "edge" \| "brave" \| "chromium" \| "firefox"` | `()` |
+| `browser_setup_open_files` | `browser: "chrome" \| "edge" \| "brave" \| "chromium" \| "firefox"` | `()` |
 | `updates_check` | — | `()`; opens the native update flow |
 | `test_sound` | `path: string` | `()`; validates and plays a Windows WAV |
 | `drag_completed` | `id: string` | `()`; native copy drag of an existing completed file |
@@ -185,17 +186,31 @@ Onboarding, Settings and Capture & queues expose the same explicit setup checkli
 last_handshake, browsers}`. `last_handshake` is nullable Unix seconds, updated only
 after an authenticated, enabled, engine-ready native `ping`; it is session-wide,
 not an installed-extension detector or per-browser connection assertion. Browser
-entries contain `{browser, name, store_url, extension_id, registered, conflict,
-unpacked_available}`; IDs/URLs are configured release metadata, not guessed installs.
+entries contain `{browser, name, store_url, extension_id, extension_ids, registered, conflict,
+unpacked_available}`; IDs are configured staged identities (including the stable
+public-key unpacked fallback); store URLs exist only for configured store listings.
+Neither is an installed-extension detector.
+`extension_ids` is the owned native-host allowlist, not a scanned browser/profile
+inventory. `registered` means that an owned registration targets this build's
+packaged helper and can serve those IDs. The list editor replaces 1–32 unique
+Chromium IDs after fresh confirmation; Firefox accepts only `osdm@osdm.app`.
+An explicitly confirmed empty list unregisters the owned default value. Add/edit/
+remove never changes another browser or uninstalls an extension; foreign manifests
+are still refused. Ordinary default registration continues to append/preserve IDs.
 
 Registration/removal require explicit confirmation and use only fixed Windows
-HKCU Chrome/Edge/Firefox host keys and packaged helper paths. Chromium IDs are
+HKCU Chrome/Edge/Brave/Chromium/Firefox host keys and packaged helper paths. Chromium IDs are
 validated; Firefox uses `osdm@osdm.app`. Existing foreign/modified registrations
 are never overwritten. Removal deletes only the owned default value, retaining
 files, other values and browsers. Manifests are persisted/synced before registration
 and use create-new, content-hash paths. Isolated native tests block mutations and
 external launches and do not read actual host keys. The browser mock refuses native
-setup rather than fabricating results. See [browser setup](browser-setup.md).
+setup rather than fabricating results. Upgrades can repair old OSDM helper paths
+and migrate exact legacy-script manifests; reconnect preserves up to 32 authorized
+Chromium IDs. NSIS invokes a headless path before engine/single-instance startup:
+interactive install requires consent, silent repair only touches existing owned
+registrations, and uninstall removes only owned values targeting this installation.
+See [browser setup](browser-setup.md).
 
 Store/file commands accept a browser enum, never a URL, registry path or executable
 from the webview. Store URLs are derived from optional build-time official listing

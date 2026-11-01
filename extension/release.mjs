@@ -3,9 +3,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash, createPublicKey } from "node:crypto";
 import webExt from "web-ext";
+import { stagePopup } from "./popup-build.mjs";
 
-export const packageFiles = ["background.js", "rules.js", "modifiers.js", "options.html", "options.js", "media.js", "media-background.js", "media-panel.js", "icon.svg"];
+export const packageFiles = ["background.js", "cookies.js", "defaults.js", "rules.js", "modifiers.js", "options.html", "media.js", "media-background.js", "network-media.js", "video-button.js", "icon.svg", "icon-16.png", "icon-32.png", "icon-48.png", "icon-128.png"];
 const source = fileURLToPath(new URL("./", import.meta.url));
+export const bundledIdentity = JSON.parse(await fs.readFile(new URL("./identity.json", import.meta.url), "utf8"));
 
 export function validateVersion(version) {
   const parts = version.split(".");
@@ -24,10 +26,11 @@ export async function stageExtension(browser, version, directory, publicKey) {
   validateVersion(version);
   const manifest = JSON.parse(await fs.readFile(path.join(source, `manifest.${browser}.json`), "utf8"));
   manifest.version = version;
-  if (browser === "chromium" && publicKey) { chromiumId(publicKey); manifest.key = publicKey; }
+  if (browser === "chromium") { publicKey ||= bundledIdentity.chromium.public_key; chromiumId(publicKey); manifest.key = publicKey; }
   // Create a new staging directory, never sweep or overwrite an existing tree.
   await fs.mkdir(directory);
-  for (const file of packageFiles) await fs.copyFile(path.join(source, file), path.join(directory, file));
+  for (const file of packageFiles) if (file !== "options.html") await fs.copyFile(path.join(source, file), path.join(directory, file));
+  await stagePopup(directory);
   await fs.writeFile(path.join(directory, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n", { flag: "wx" });
   return manifest;
 }

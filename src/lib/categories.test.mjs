@@ -19,6 +19,12 @@ test("built-ins match case-insensitively and unknown files fall back to General"
   assert.equal(routeCategory(DEFAULT_CATEGORIES, "invalid", ".zip"), undefined);
 });
 
+test("expanded built-ins route current app packages, image/font formats and document types", () => {
+  for (const [filename, category] of [["setup.msixbundle", "programs"], ["app.apk", "programs"], ["image.avif", "images"], ["font.woff2", "fonts"], ["book.azw3", "documents"], ["album.opus", "music"], ["film.m4v", "video"]]) {
+    assert.equal(routeCategory(DEFAULT_CATEGORIES, "https://files.example/download", filename)?.id, category);
+  }
+});
+
 test("exact original hostname wins over extensions without matching URL secrets or suffixes", () => {
   const domain = {
     id: "work",

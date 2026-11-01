@@ -81,6 +81,18 @@ are explicit; source completion is not native/browser release validation.
   media item (optional player subtitle), persisted global/exact-site disable, and
   an authenticated native `offer_media` handoff. Nothing downloads automatically,
   no cookies are sent, and no media URLs are stored as analytics.
+- Optional network discovery observes actual response URLs/content types after
+  an explicit `webRequest`/site-permission grant. It can discover HTTP-backed blob
+  and JavaScript players, extensionless manifests and embedded-frame media without
+  injecting into the frame. Normal scans also inspect all browser-permitted frames,
+  keeping each player's subtitles frame-local. No page functions are patched or
+  JavaScript variables evaluated; no request headers, cookies, response bodies or
+  decryption keys are read. The session-only cache is bounded to 8 tabs × 32 sources,
+  offers expire after 5 minutes, and navigation/disable clears cached offers.
+- A user-enabled floating button beside a playing video opens explicit source
+  selection. Site permission gates injection; one-use 60-second tab/frame-bound
+  tokens gate handoff. It neither patches playback nor accepts arbitrary URLs from
+  page messages. Popup pages are now React/Vite, hash-routed and keyboard accessible.
 
 ### Site Grabber
 
@@ -147,8 +159,11 @@ are explicit; source completion is not native/browser release validation.
   a supported subtitle MIME type; filename/MIME conflicts fail before remux.
   HLS WebVTT playlists support `X-TIMESTAMP-MAP` (including 33-bit wrap); absent
   maps use the specified zero-clock mapping, not a guessed per-segment offset.
-- No site adapters or headless browser, no forms/login, no JavaScript-heavy
-  capture, no automatic site-wide capture.
+- No site adapters or headless browser, no forms/login, no execution of arbitrary
+  page JavaScript and no automatic site-wide capture. Network discovery needs a
+  real HTTP(S) backing request: wholly local/generated blobs, DRM decryption and
+  browser-restricted pages/requests remain unsupported. Discovering a URL does not
+  make an unsupported HLS/DASH representation or authenticated endpoint supported.
 - Automatic mirroring saves matching known-size files as separate revisions; it
   does not rewrite HTML links into an offline website or replace unchanged files.
   Page/file/depth ceilings apply per exploration; byte accounting spans revisions.
@@ -163,6 +178,14 @@ are explicit; source completion is not native/browser release validation.
 - Job and merged-file SHA-256 is locally computed, not publisher-authenticated.
 
 ## Acceptance evidence
+
+The subsequent browser-discovery pass records 43 extension/packaging tests and a
+real Chrome 138 disposable-profile smoke: an extensionless HLS response requested
+by an embedded blob/JavaScript player appears as a selectable offer. The same run
+verifies extensionless EXE handoff, byte-exact publication, reconnect and missing-
+host fallback, with original registrations restored/verified. This is HTTP-source
+discovery evidence, not local-only blob export, DRM support, production-site
+playback or a claim that every streaming format can be downloaded.
 
 Run from the repository root (Windows paths shown for the optional FFmpeg steps):
 

@@ -1,4 +1,4 @@
-export const mediaDefaults = { mediaEnabled: true, mediaDisabledSites: [] };
+export const mediaDefaults = { mediaEnabled: true, mediaDisabledSites: [], networkMediaEnabled: false, floatingVideos: false };
 export const mediaLimits = { entries: 256, offers: 32, url: 8192 };
 
 export function mediaUrl(value, base) {
@@ -109,9 +109,13 @@ export function collectMedia() {
     if (/\.(m3u8|mpd|mp4|m4v|webm|mkv|mov|mp3|m4a|aac|ogg|oga|ogv|opus|wav|flac)(?:[?#]|$)/i.test(resource.name))
       add({ url: resource.name, source: "resource" });
   }
-  return { title: document.title.slice(0, 512), entries };
+  return { title: document.title.slice(0, 512), base: document.baseURI, entries };
 }
 
 export function isMediaPopup(sender, runtime) {
-  return sender?.id === runtime.id && !sender.tab && sender.url === runtime.getURL("options.html");
+  if (sender?.id !== runtime.id || sender.url?.split("#")[0] !== runtime.getURL("options.html")) return false;
+  // The same private extension UI may be opened in a tab. A tab-bound sender
+  // additionally needs the browser-reported extension origin; a content script
+  // or webpage origin can never authorize a media offer.
+  return !sender.tab || sender.origin === runtime.getURL("").replace(/\/$/, "");
 }

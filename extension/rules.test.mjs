@@ -54,3 +54,12 @@ test("link selection drops unsupported and credential URLs, deduplicates normali
     ["https://files.example/a"],
   );
 });
+
+test("browser filenames enable extensionless capture without bypassing exclusions, URL safety or opt-in", () => {
+  const rules = { enabled: true, extensions: "exe", exclusions: "private.example" };
+  assert.equal(eligible("https://files.example/download", "https://page.example/", rules, false, "C:\\Downloads\\setup.EXE"), true);
+  assert.equal(eligible("https://files.example/download", "https://private.example/", rules, false, "setup.exe"), false);
+  assert.equal(eligible("https://files.example/download", "", rules, false, "setup.exe"), false);
+  assert.equal(eligible("blob:https://files.example/id", "https://page.example/", rules, false, "setup.exe"), false);
+  assert.equal(eligible("https://files.example/download", "https://page.example/", { ...rules, enabled: false }, false, "setup.exe"), false);
+});

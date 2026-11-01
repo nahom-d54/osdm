@@ -1,4 +1,5 @@
 import { FolderOpen, Monitor, Moon, RefreshCw, Sun } from "lucide-react";
+import { useId, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
@@ -21,6 +22,9 @@ import { useEngine } from "@/store/engine";
 export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { settings, update } = useSettings();
   const { applySpeedLimit } = useEngine();
+  const pages = ["General", "Transfers", "Browser", "Categories", "Desktop", "Layout", "Updates"] as const;
+  const [page, setPage] = useState<(typeof pages)[number]>("General");
+  const tabsId = useId();
 
   return (
     <Modal
@@ -30,7 +34,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
       }}
       title="Settings"
       description="Stored on this machine. Speed changes apply to running transfers; concurrency changes apply after OSDM reopens."
-      className="sm:max-w-[37rem]"
+      className="sm:max-w-[48rem]"
       footer={
         <div className="flex w-full items-center justify-between">
           <Button
@@ -50,7 +54,16 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
       }
     >
       <div className="flex flex-col gap-5">
-        <section className="space-y-3"><h3 className="eyebrow">Browser integration</h3><BrowserSetup /></section>
+        <div role="tablist" aria-label="Settings pages" className="flex gap-1 overflow-x-auto border-b border-line pb-2" onKeyDown={(event) => {
+          if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+          event.preventDefault();
+          const index = pages.indexOf(page);
+          const next = event.key === "Home" ? 0 : event.key === "End" ? pages.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + pages.length) % pages.length;
+          setPage(pages[next]);
+          document.getElementById(`${tabsId}-${pages[next]}`)?.focus();
+        }}>{pages.map((value) => <button key={value} id={`${tabsId}-${value}`} role="tab" aria-selected={page === value} aria-controls={`${tabsId}-${value}-panel`} tabIndex={page === value ? 0 : -1} onClick={() => setPage(value)} className={`shrink-0 rounded-md px-3 py-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring ${page === value ? "bg-brand-soft font-medium text-brand" : "text-muted-foreground hover:bg-raise"}`}>{value}</button>)}</div>
+        <div role="tabpanel" id={`${tabsId}-Browser-panel`} aria-labelledby={`${tabsId}-Browser`} hidden={page !== "Browser"}><section className="space-y-3"><h3 className="eyebrow">Browser integration</h3><BrowserSetup /></section></div>
+        <div role="tabpanel" id={`${tabsId}-General-panel`} aria-labelledby={`${tabsId}-General`} hidden={page !== "General"} className="space-y-5">
         <section>
           <h3 className="eyebrow">Appearance</h3>
           <div className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] items-start gap-4 max-[520px]:grid-cols-1">
@@ -111,10 +124,11 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
         <Field label="Remember last-used folder">
           <Toggle pressed={settings.remember_last_directory} onPressedChange={(pressed) => update({ remember_last_directory: pressed })}>Remember folder</Toggle>
         </Field>
-        <CategorySettings />
-        <DesktopSettings key={JSON.stringify([settings.desktop.scanner_executable, settings.desktop.sound_file, settings.desktop.scanner_arguments])} />
-        <LayoutSettings />
-        <Separator />
+        </div>
+        <div role="tabpanel" id={`${tabsId}-Categories-panel`} aria-labelledby={`${tabsId}-Categories`} hidden={page !== "Categories"}><CategorySettings /></div>
+        <div role="tabpanel" id={`${tabsId}-Desktop-panel`} aria-labelledby={`${tabsId}-Desktop`} hidden={page !== "Desktop"}><DesktopSettings key={JSON.stringify([settings.desktop.scanner_executable, settings.desktop.sound_file, settings.desktop.scanner_arguments])} /></div>
+        <div role="tabpanel" id={`${tabsId}-Layout-panel`} aria-labelledby={`${tabsId}-Layout`} hidden={page !== "Layout"}><LayoutSettings /></div>
+        <div role="tabpanel" id={`${tabsId}-Transfers-panel`} aria-labelledby={`${tabsId}-Transfers`} hidden={page !== "Transfers"} className="space-y-5">
 
         <section>
           <div className="flex items-baseline justify-between gap-2">
@@ -148,7 +162,6 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
         </section>
 
         <Separator />
-
         <section>
           <div className="flex items-baseline justify-between gap-2">
             <h3 className="eyebrow">Connections</h3>
@@ -192,9 +205,9 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
             Concurrency is fixed for the engine's lifetime. Changes apply after OSDM reopens.
           </p>
         </section>
+        </div>
 
-        <Separator />
-
+        <div role="tabpanel" id={`${tabsId}-Updates-panel`} aria-labelledby={`${tabsId}-Updates`} hidden={page !== "Updates"}>
         <section>
           <div className="flex items-baseline justify-between gap-2">
             <h3 className="eyebrow">Updates</h3>
@@ -234,6 +247,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
           </p>
         </section>
 
+        </div>
         <div className="flex items-center justify-between pt-1 font-mono text-[8.5px] uppercase tracking-[0.1em] text-faint">
           <span>OSDM alpha</span>
           <span>Local engine · no telemetry</span>

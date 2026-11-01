@@ -1,4 +1,4 @@
-export function eligible(url, referrer, rules, bypass = false) {
+export function eligible(url, referrer, rules, bypass = false, filename = "") {
   if (!rules.enabled || bypass) return false;
   try {
     const parsed = new URL(url);
@@ -29,7 +29,8 @@ export function eligible(url, referrer, rules, bypass = false) {
       .filter(Boolean)
       .map((s) => s.replace(/^\./, ""));
     const path = decodeURIComponent(parsed.pathname).toLowerCase();
-    return extensions.some((ext) => path.endsWith(`.${ext}`));
+    const name = typeof filename === "string" ? filename.split(/[\\/]/).at(-1).toLowerCase() : "";
+    return extensions.some((ext) => path.endsWith(`.${ext}`) || name.endsWith(`.${ext}`));
   } catch {
     return false;
   }

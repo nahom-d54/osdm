@@ -30,6 +30,7 @@ export interface EngineBridge {
   enableCapture(enabled: boolean): Promise<void>;
   browserSetupStatus(): Promise<import("@/lib/browser-setup").BrowserSetupStatus>;
   registerBrowserHelper(browser: import("@/lib/browser-setup").BrowserTarget, extensionId: string, confirmed: boolean): Promise<void>;
+  setBrowserIdentities(browser: import("@/lib/browser-setup").BrowserTarget, extensionIds: string[], confirmed: boolean): Promise<void>;
   unregisterBrowserHelper(browser: import("@/lib/browser-setup").BrowserTarget, confirmed: boolean): Promise<void>;
   openExtensionStore(browser: import("@/lib/browser-setup").BrowserTarget): Promise<void>;
   openExtensionFiles(browser: import("@/lib/browser-setup").BrowserTarget): Promise<void>;

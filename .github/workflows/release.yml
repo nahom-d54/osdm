@@ -54,7 +54,7 @@ jobs:
           package_version=$(jq -r .version package.json)
           cargo_version=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
           engine_version=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/download-engine/Cargo.toml | head -1)
-          for crate in cli browser-bridge; do
+          for crate in cli browser-bridge media-capture site-grabber; do
             tool_version=$(sed -n 's/^version = "\(.*\)"/\1/p' "crates/$crate/Cargo.toml" | head -1)
             if [[ "$tool_version" != "$version" ]]; then
               echo "Version mismatch in crates/$crate/Cargo.toml" >&2
@@ -87,7 +87,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run engine tests
-        run: cargo test --locked -p download-engine -p osdm-cli -p osdm-browser-bridge
+        run: cargo test --locked -p download-engine -p osdm-cli -p osdm-browser-bridge -p osdm-media-capture -p site-grabber
 
   windows:
     name: Build Windows installer
@@ -134,7 +134,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           New-Item -ItemType Directory -Path capture-tools | Out-Null
           Copy-Item target/release/osdm-cli.exe,target/release/osdm-native-host.exe capture-tools/
-          Copy-Item -Recurse extension capture-tools/extension
+          node --input-type=module -e "import {stageBrowserResources} from './scripts/desktop-build.mjs'; await stageBrowserResources('target/release/osdm-native-host.exe', 'capture-tools/browser-integration');"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item extension/register-host.ps1,extension/unregister-host.ps1 capture-tools/
+          Copy-Item extension/BUNDLED-SETUP.md capture-tools/BROWSER-SETUP.md
           Copy-Item crates/cli/README.md capture-tools/CLI.md
           Compress-Archive -Path capture-tools/* -DestinationPath "osdm-capture-tools_${env:RELEASE_TAG}_x64.zip"
 
@@ -209,7 +212,9 @@ jobs:
           cargo build --locked --release -p osdm-cli -p osdm-browser-bridge
           mkdir capture-tools
           cp target/release/osdm-cli target/release/osdm-native-host capture-tools/
-          cp -r extension capture-tools/extension
+          node --input-type=module -e "import {stageBrowserResources} from './scripts/desktop-build.mjs'; await stageBrowserResources('target/release/osdm-native-host', 'capture-tools/browser-integration');"
+          cp extension/register-host.ps1 extension/unregister-host.ps1 capture-tools/
+          cp extension/BUNDLED-SETUP.md capture-tools/BROWSER-SETUP.md
           cp crates/cli/README.md capture-tools/CLI.md
           tar -czf "osdm-capture-tools_${RELEASE_TAG}_amd64.tar.gz" -C capture-tools .
 
@@ -264,7 +269,7 @@ jobs:
           - Windows: NSIS installer
           - Linux: Debian package for Ubuntu 24.04 and newer
           - Desktop packages include the native helper and browser extension files for guided, consent-based setup.
-          - Capture tools: separate CLI/native-host archives with source and setup scripts for advanced/manual setups.
+          - Capture tools: separate CLI/native-host archives with compiled browser extensions and setup scripts for advanced/manual setups.
           - Browser extensions still require browser approval; no store listing or signing is implied.
 
           SHA256SUMS.txt covers every downloadable asset.

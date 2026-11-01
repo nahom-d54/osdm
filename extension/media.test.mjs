@@ -83,25 +83,30 @@ test("manual detection defaults on but global and exact-site disable persist wit
   assert.deepEqual(toggleMediaSite(disabled, "blob:invalid", true), disabled);
 });
 
-test("only the exact extension popup sender is trusted, not content scripts or web pages", () => {
+test("only the exact extension UI is trusted; tab views also require the extension origin", () => {
   const runtime = { id: "extension-id", getURL: (file) => `chrome-extension://extension-id/${file}` };
   const sender = { id: runtime.id, url: runtime.getURL("options.html") };
   assert.equal(isMediaPopup(sender, runtime), true);
+  assert.equal(isMediaPopup({ ...sender, url: sender.url + "#/media" }, runtime), true);
+  assert.equal(isMediaPopup({ ...sender, tab: { id: 1 }, origin: "chrome-extension://extension-id" }, runtime), true);
   for (const untrusted of [{ ...sender, tab: { id: 1 } }, { ...sender, url: "https://page.example/" }, { ...sender, id: "another-extension" }, { ...sender, url: sender.url + "?spoof" }])
     assert.equal(isMediaPopup(untrusted, runtime), false);
 });
 
-function harness({ reply = { ok: true }, settings = mediaDefaults } = {}) {
+function harness({ reply = { ok: true }, settings = mediaDefaults, frames, denyAllFrames = false } = {}) {
   let listener;
   let tab = { id: 7, url: "https://page.example/player" };
   const calls = [];
   const api = {
     runtime: { id: "id", getURL: (file) => `moz-extension://id/${file}`, onMessage: { addListener: (fn) => { listener = fn; } } },
-    tabs: { query: async () => [tab] },
+    tabs: { query: async () => [tab], get: async () => tab },
+    permissions: { contains: async () => true },
     storage: { local: { get: async () => settings } },
-    scripting: { executeScript: async ({ func }) => {
+    scripting: { executeScript: async ({ func, target }) => {
       assert.equal(func, collectMedia);
+      if (denyAllFrames && target.allFrames) throw new Error("Restricted child frame");
       calls.push("scan");
+      if (frames) { assert.equal(target.allFrames, true); return frames; }
       return [{ result: { title: "Page title", entries: [
         { url: "/film.m3u8?signature=ephemeral", source: "video", group: 0 },
         { url: "/sub.vtt", source: "track", group: 0 },
@@ -138,4 +143,35 @@ test("navigation, disabled integration and missing native host fail without touc
   const disabled = harness({ settings: { ...mediaDefaults, mediaEnabled: false } });
   assert.equal((await disabled.send({ op: "scan_media" })).error, "disabled");
   assert.deepEqual(disabled.calls, []);
+});
+
+test("all-frame scanning resolves each frame against its own base and never cross-associates captions", async () => {
+  const h = harness({ frames: ["one", "two"].map((name) => ({ result: { title: name, base: `https://${name}.example/player/`, entries: [
+    { url: "film.mp4", source: "video", group: 0 }, { url: "sub.vtt", source: "track", group: 0 },
+  ] } })) });
+  const { offers } = await h.send({ op: "scan_media" });
+  assert.equal(offers.length, 2);
+  for (const [index, name] of ["one", "two"].entries()) {
+    assert.equal(offers[index].url, `https://${name}.example/player/film.mp4`);
+    assert.deepEqual(offers[index].subtitles.map((track) => track.url), [`https://${name}.example/player/sub.vtt`]);
+  }
+});
+
+test("a denied child-frame injection does not discard the permitted top-frame scan", async () => {
+  const h = harness({ denyAllFrames: true });
+  assert.equal((await h.send({ op: "scan_media" })).offers.length, 1);
+});
+
+test("floating offers are bound to the requesting tab/frame and cannot hand off page-supplied URLs", async () => {
+  const h = harness({ settings: { ...mediaDefaults, floatingVideos: true } });
+  const sender = { id: "id", tab: { id: 7, url: "https://page.example/player" }, frameId: 0, url: "https://page.example/player" };
+  const send = (message, source = sender) => new Promise((resolve) => h.listener(message, source, resolve));
+  const scanned = await send({ op: "video_offers", url: "https://untrusted.example/forged" });
+  assert.equal(scanned.ok, true);
+  assert.equal((await send({ op: "offer_video", token: scanned.token, index: 0 }, { ...sender, frameId: 3 })).error, "rescan");
+  assert.equal(h.calls.filter((call) => typeof call === "object").length, 0);
+  const next = await send({ op: "video_offers" });
+  assert.equal((await send({ op: "offer_video", token: next.token, index: 0, url: "https://untrusted.example/forged" })).ok, true);
+  assert.equal(h.calls.find((call) => typeof call === "object").url, "https://page.example/film.m3u8?signature=ephemeral");
+  assert.equal((await send({ op: "offer_video", token: next.token, index: 0 })).error, "rescan");
 });

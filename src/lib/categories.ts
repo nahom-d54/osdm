@@ -10,38 +10,40 @@ export const DEFAULT_CATEGORIES: Category[] = [
   {
     id: "music",
     name: "Music",
-    extensions: ["mp3", "flac", "wav", "ogg", "m4a"],
+    extensions: ["mp3", "flac", "wav", "ogg", "m4a", "aac", "opus", "wma", "aiff", "alac"],
     domains: [],
     directory: "",
   },
   {
     id: "video",
     name: "Video",
-    extensions: ["mp4", "mkv", "webm", "avi", "mov"],
+    extensions: ["mp4", "mkv", "webm", "avi", "mov", "m4v", "mpg", "mpeg", "wmv", "flv", "ogv", "3gp", "ts"],
     domains: [],
     directory: "",
   },
   {
     id: "programs",
     name: "Programs",
-    extensions: ["exe", "msi", "msix", "deb", "rpm"],
+    extensions: ["exe", "msi", "msix", "deb", "rpm", "msixbundle", "appx", "appxbundle", "apk", "aab", "dmg", "pkg", "iso", "img"],
     domains: [],
     directory: "",
   },
   {
     id: "documents",
     name: "Documents",
-    extensions: ["pdf", "txt", "doc", "docx", "epub"],
+    extensions: ["pdf", "txt", "doc", "docx", "epub", "mobi", "azw3", "rtf", "odt", "xls", "xlsx", "ods", "csv", "ppt", "pptx", "odp"],
     domains: [],
     directory: "",
   },
   {
     id: "compressed",
     name: "Compressed",
-    extensions: ["zip", "7z", "rar", "tar", "gz", "bz2", "xz", "zst"],
+    extensions: ["zip", "7z", "rar", "tar", "gz", "bz2", "xz", "zst", "tar.gz", "tar.xz", "tgz", "tbz2", "cab"],
     domains: [],
     directory: "",
   },
+  { id: "images", name: "Images", extensions: ["jpg", "jpeg", "png", "gif", "webp", "avif", "svg", "tif", "tiff", "bmp", "psd", "ai"], domains: [], directory: "" },
+  { id: "fonts", name: "Fonts", extensions: ["ttf", "otf", "woff", "woff2", "eot"], domains: [], directory: "" },
 ];
 
 /** Exact source hostname rules precede extension rules; list order breaks ties.

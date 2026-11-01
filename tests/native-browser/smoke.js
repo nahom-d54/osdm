@@ -1,5 +1,6 @@
 // Added only to disposable test copies. Never shipped in extension packages.
 import "./background.js";
+import { automaticCookieHeaders } from "./cookies.js";
 
 const api = globalThis.browser ?? chrome;
 const config = globalThis.OSDM_NATIVE_SMOKE;
@@ -31,12 +32,16 @@ async function transfer(suffix, headers = null) {
   }, "native publication");
   check(complete.sha256 === config.sha256, "Published bytes did not match the fixture hash");
 }
-async function browserDownload(suffix, expected) {
-  const id = await api.downloads.download({ url: `${config.base}/native-${config.target}-${suffix}.bin`, saveAs: false, conflictAction: "uniquify" });
+async function browserDownload(suffix, expected, extensionless = false) {
+  const id = await api.downloads.download({ url: `${config.base}/native-${config.target}-${suffix}${extensionless ? "" : ".bin"}`, saveAs: false, conflictAction: "uniquify" });
   await waitFor(async () => {
     const current = (await api.downloads.search({ id }))[0];
     if (expected === "canceled") {
-      check(current?.state !== "complete", "Browser completed instead of handing off to OSDM");
+      if (current?.state === "complete") {
+        const { lastCapture } = await api.storage.session.get({ lastCapture: null });
+        await report("capture_diagnostic", JSON.stringify({ suffix, outcome: lastCapture?.outcome ?? "no-handoff", paused: current.paused }));
+        throw new Error(`Browser completed ${suffix} instead of handing off to OSDM`);
+      }
       // Both browsers may retain paused=true after cancellation. The terminal
       // error distinguishes cancellation from Firefox's interrupted pause.
       return current?.state === "interrupted" && current.error === "USER_CANCELED";
@@ -49,7 +54,7 @@ async function browserDownload(suffix, expected) {
 async function main() {
   await report("browser_version", navigator.userAgent.match(/(?:Chrome|Firefox)\/[0-9.]+/)?.[0] ?? "unknown");
   await report("started", await phase());
-  await api.storage.local.set({ enabled: true, extensions: "bin", exclusions: "" });
+  await api.storage.local.set({ enabled: true, extensions: "bin exe", exclusions: "" });
   if (await phase() === "missing") {
     check(!(await native({ op: "ping" })).ok, "Missing-host test still found a native host");
     await browserDownload("fallback", "complete");
@@ -57,6 +62,17 @@ async function main() {
     return;
   }
   await waitFor(async () => (await native({ op: "ping" })).ok, "initial native handshake");
+  // Disposable browser profile only. No network request or real login is used.
+  const cookieUrl = "https://cookie-fixture.example/files/fixture.exe";
+  await api.cookies.set({ url: cookieUrl, name: "session", value: "synthetic-cookie-fixture", path: "/files", secure: true });
+  const cookieHeaders = await automaticCookieHeaders(api, cookieUrl, { cookiesEnabled: true }, {});
+  check(cookieHeaders?.cookie === "session=synthetic-cookie-fixture", "Automatic URL-matching cookie lookup failed");
+  check(await automaticCookieHeaders(api, cookieUrl, { cookiesEnabled: false }, {}) === null, "Global cookie opt-out was ignored");
+  check(await automaticCookieHeaders(api, "https://cookie-fixture.example/other/fixture.exe", {}, {}) === null, "Cookies escaped their browser URL path scope");
+  const cookieIntent = await native({ op: "prepare", url: cookieUrl, filename: `native-${config.target}-cookie-fixture.exe`, headers: cookieHeaders, explicit_credentials: true });
+  check(cookieIntent.ok, "Native cookie prepare failed");
+  check((await native({ op: "abort", id: cookieIntent.id })).ok, "Native cookie intent cleanup failed");
+  await report("automatic_cookie_lookup_and_prepare_pass");
   await api.storage.local.set({ enabled: false });
   const diagnostic = await api.downloads.download({ url: `${config.base}/native-${config.target}-pause.bin`, saveAs: false });
   await api.downloads.pause(diagnostic);
@@ -71,8 +87,9 @@ async function main() {
   await transfer("explicit");
   await transfer("private", { cookie: "session=native-fixture", authorization: "Bearer native-fixture", user_agent: null });
   await browserDownload("auto", "canceled");
+  await browserDownload("endpoint", "canceled", true);
   await report("initial_pass");
-  await waitFor(async () => await phase() === "offline", "app termination phase");
+  await waitFor(async () => await phase() === "offline", "app termination phase", 120000);
   check(!(await native({ op: "ping" })).ok, "Stopped app still answered native requests");
   await report("offline_pass");
   await waitFor(async () => await phase() === "reconnect", "app restart phase");

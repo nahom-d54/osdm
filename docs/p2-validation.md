@@ -19,7 +19,7 @@ files; implementation and validation remain outstanding. See
 | Synchronization | Opt-in per queue; probes completed sources using engine connection/cooldown budgets. Matching nonempty validator + length skip a new transfer; changes or unverifiable identity download a fresh revision. Old copies remain intact. Checks are cancellable and shutdown drains them. Failed revisions require explicit retry. Removing source history requires first unassigning it from the synchronization queue. |
 | Completion | Session-only opt-in Windows shutdown or named RAS/VPN disconnect, after every selected queue file completes. Unrelated runnable work blocks it. New work cancels an already-visible, monotonic 60-second countdown. Final engine quiescence and durable shutdown precede the action. No Wi-Fi/VPN management stack, silent shutdown, or dial-up redial is added. |
 | Windows sign-in | Explicit current-user Start with Windows toggle. No administrator elevation. |
-| Browser | Separate Chromium/Firefox MV3 targets, explicit link/selected/page capture, opt-in interception, exclusions/file suffixes, optional modifier bypass, native-message allowlists, authenticated IPv4 loopback forwarding, durable prepare/commit/abort leases, per-transfer explicit cookie handoff. Guided Windows Chrome/Edge/Firefox setup requires consent, refuses foreign registrations and reports session-wide native handshakes without scanning browser profiles. Manual scripts retain vendor-specific custom browser support. |
+| Browser | Separate Chromium/Firefox MV3 targets, explicit link/selected/page capture, opt-in interception using URL or browser filename (including late filenames), exclusions/file suffixes, optional modifier bypass, native-message allowlists, authenticated IPv4 loopback forwarding, durable prepare/commit/abort leases, per-transfer explicit cookie handoff. Guided Windows Chrome/Edge/Brave/Chromium/Firefox setup and installer helper setup require consent, refuse foreign registrations and report session-wide native handshakes without scanning profiles. Opt-in media response-metadata observation can discover HTTP-backed blob/JS/frame sources without reading headers/cookies/bodies. Manual scripts retain vendor-specific custom browser support. |
 | Distribution | Desktop build wrapper stages the native helper and allowlisted Chromium/Edge/Firefox files as Tauri resources; no automatic registration or browser installation. Release workflow also builds separate checksummed CLI/native-host archives. Optional real store metadata enables official-listing buttons; none is fabricated by default. Signing/publication stays a separate approved workflow. See [guided setup](browser-setup.md). |
 
 ## Time and restart policy
@@ -120,6 +120,35 @@ These automated results do not close the live validation gaps below.
   documentation requires environment reviewers and CI secrets. No account
   credentials were supplied or used. Draft upload tests use an injected mock
   transport; they do not establish a real store upload/signing pass.
+
+### Release-candidate validation — 2026-11-01
+
+- `pnpm test`: **18 pass**; `pnpm test:extension`: **51 pass**, including
+  URL-scoped automatic cookies/global opt-out, safe cookie-store selection,
+  revoked permissions, EXE filename handoff and frame-bound media selections.
+- Production UI build/typecheck: **pass** (existing bundle-size advisory).
+  Full Playwright suite: **57 pass**, including React/Vite extension hash routes,
+  cookie permission/opt-out UI, floating controls, settings tabs, identity editing
+  and both-theme accessibility. Extension UI tests use browser API fixtures; they
+  do not establish a real browser permission-dialog pass.
+- Latest desktop Rust tests: **29 pass**; workspace/all-targets Clippy with
+  `-D warnings` and Rust formatting: **pass**. Full workspace tests passed before
+  the latest UI/identity increment; desktop tests cover that increment.
+- Debug Windows NSIS installer: **built**, not an interactive installer lifecycle
+  pass. Release archives now stage compiled extensions rather than raw React/Vite
+  source that cannot be loaded without a Node build.
+- Disposable Chrome 138 smoke: **pass** for browser URL/path-scoped synthetic
+  cookies, global opt-out and authenticated native prepare/abort; EXE interception
+  with byte-exact publication; embedded blob/JS network discovery; reconnect and
+  missing-host fallback. Zero credential forwarding leaks were recorded. Existing
+  native-host registrations were restored and verified by the harness. Evidence:
+  `%LOCALAPPDATA%\Temp\opencode\osdm-native-browser-plHzHa\results.json`.
+- Firefox package lint: **0 errors, 0 notices, 2 warnings** in bundled React DOM's
+  internal `innerHTML` assignments. Application UI uses escaped React text and
+  does not use `dangerouslySetInnerHTML`; actual store review remains pending.
+- Automatic cookies apply only to HTTPS ordinary file capture, not media jobs.
+  Live permission prompts, signed Firefox restart, authenticated production sites
+  and broad playback compatibility remain unverified.
 
 ## Remaining release checks / scope differences
 

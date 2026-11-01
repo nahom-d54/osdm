@@ -623,6 +623,9 @@ fn quit(app: AppHandle) {
 }
 
 pub fn run() {
+    if let Some(code) = browser_setup::installer_cli() {
+        std::process::exit(code);
+    }
     let test_directory = osdm_browser_bridge::native_test_directory().unwrap_or_else(|_| {
         eprintln!("OSDM: invalid native test isolation directory");
         std::process::exit(2);
@@ -672,6 +675,7 @@ pub fn run() {
             engine_automation,
             engine_configure_automation,
             capture::capture_status,
+            browser_setup::browser_setup_set_identities,
             capture::capture_enable,
             browser_setup::browser_setup_status,
             browser_setup::browser_setup_register,

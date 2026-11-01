@@ -62,6 +62,7 @@ test("defer, persist properties, filter category, customize columns and toolbar"
     .getByRole("button", { name: "Close inspector", exact: true })
     .click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("tab", { name: "Layout", exact: true }).click();
   await page.getByRole("checkbox", { name: "rate", exact: true }).uncheck();
   await page.getByRole("checkbox", { name: "pause", exact: true }).uncheck();
   await page.getByRole("button", { name: "Done", exact: true }).click();
@@ -137,4 +138,18 @@ test("onboarding can check or skip without queueing a download", async ({
     .click();
   await expect(onboarding.getByRole("dialog")).toHaveCount(0);
   await expect(onboarding.locator("li[data-row]")).toHaveCount(0);
+});
+
+test("settings pages switch with arrow keys and expose only the selected panel", async ({ page }) => {
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(page.getByRole("tabpanel", { name: "General", exact: true })).toBeVisible();
+  await expect(page.getByRole("tabpanel")).toHaveCount(1);
+  await page.getByRole("tab", { name: "General", exact: true }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("tab", { name: "Transfers", exact: true })).toBeFocused();
+  await expect(page.getByRole("tabpanel", { name: "Transfers", exact: true }).getByLabel("Speed limit", { exact: true })).toBeVisible();
+  await page.getByRole("tab", { name: "Categories", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Add missing built-in file types" })).toBeVisible();
+  await page.getByRole("tab", { name: "Browser", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Set up browser extension", exact: true })).toBeVisible();
 });

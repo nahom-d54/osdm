@@ -1,13 +1,11 @@
 import { eligible, normalizedLinks } from "./rules.js";
 import { installMediaPanel } from "./media-background.js";
+import { automaticCookieHeaders, cookieOrigin, cookiePermission, readCookieHeaders } from "./cookies.js";
+import { captureDefaults } from "./defaults.js";
 
 const api = globalThis.browser ?? chrome;
 const host = "app.osdm.capture";
-const defaults = {
-  enabled: false,
-  exclusions: "",
-  extensions: "zip exe msi iso pdf mp4 mkv 7z tar.gz",
-};
+const defaults = captureDefaults;
 const native = async (message) => {
   try {
     return await api.runtime.sendNativeMessage(host, message);
@@ -49,11 +47,13 @@ api.runtime.onInstalled.addListener(() => {
   void installMenus();
 });
 
-async function prepare(url, headers) {
+async function prepare(url, headers, browserFilename) {
   const parsed = new URL(url);
-  const filename = decodeURIComponent(
-    parsed.pathname.split("/").at(-1) || "download",
-  );
+  let filename = browserFilename?.split(/[\\/]/).at(-1);
+  if (!filename) {
+    try { filename = decodeURIComponent(parsed.pathname.split("/").at(-1) || "download"); }
+    catch { filename = "download"; }
+  }
   return native({
     op: "prepare",
     url,
@@ -84,22 +84,15 @@ api.contextMenus.onClicked.addListener((info, tab) => {
   // Permission requests must begin inside the user gesture, not after native I/O.
   if (info.menuItemId === "cookies") {
     const url = info.linkUrl;
-    const parsed = new URL(url);
-    const origin = `${parsed.protocol}//${parsed.hostname}`;
-    if (!url.startsWith("https://")) {
+    if (!cookieOrigin(url)) {
       notify();
       return;
     }
     void api.permissions
-      .request({ permissions: ["cookies"], origins: [`${origin}/*`] })
+      .request(cookiePermission(url))
       .then(async (allowed) => {
         if (!allowed) return;
-        const cookies = await api.cookies.getAll({ url }); // Only cookies applicable to this one URL.
-        await captureExplicit([url], {
-          cookie: cookies.map((c) => `${c.name}=${c.value}`).join("; "),
-          authorization: null,
-          user_agent: null,
-        });
+        await captureExplicit([url], await readCookieHeaders(api, url, { tab }));
       })
       .catch(notify);
   } else if (info.menuItemId === "link") {
@@ -132,8 +125,16 @@ api.runtime.onMessage.addListener((message, sender) => {
   }
 });
 
-api.downloads.onCreated.addListener((item) => {
-  return (async () => {
+const handling = new Map();
+const finished = new Set();
+const captureStatus = async (outcome) => {
+  // No source URL, query, local filename or credentials in diagnostics.
+  try { await api.storage.session.set({ lastCapture: { outcome, at: Date.now() } }); } catch { /* Diagnostic only. */ }
+};
+const handleDownload = (item) => {
+  if (handling.has(item.id)) return handling.get(item.id);
+  if (finished.has(item.id)) return Promise.resolve();
+  const operation = (async () => {
     const rules = await api.storage.local.get(defaults);
     const session = await api.storage.session.get({ bypassUntil: 0 });
     if (
@@ -143,19 +144,24 @@ api.downloads.onCreated.addListener((item) => {
         item.referrer,
         rules,
         Date.now() < session.bypassUntil,
+        item.filename,
       )
     )
       return;
     // Only pause after a healthy version handshake. A missing/outdated host never
-    // cancels a browser download. No cookies accompany automatic interception.
+    // cancels a browser download. Cookies require separate exact-site consent.
     const health = await native({ op: "ping" });
-    if (!health.ok || health.version !== 1) return;
+    if (!health.ok || health.version !== 1) { await captureStatus("disconnected"); return; }
+    let headers;
+    try { headers = await automaticCookieHeaders(api, item.finalUrl || item.url, rules, item); }
+    catch { await captureStatus("cookie_unavailable"); return; }
     let prepared;
     try {
       await api.downloads.pause(item.id);
-      prepared = await prepare(item.finalUrl || item.url);
+      prepared = await prepare(item.finalUrl || item.url, headers, item.filename);
       if (!prepared.ok) {
         await api.downloads.resume(item.id);
+        await captureStatus("prepare_failed");
         return;
       }
       const current = (await api.downloads.search({ id: item.id }))[0];
@@ -167,10 +173,13 @@ api.downloads.onCreated.addListener((item) => {
         return;
       }
       await api.downloads.cancel(item.id);
+      finished.add(item.id);
+      if (finished.size > 256) finished.delete(finished.values().next().value);
       if (!prepared.duplicate) {
         const committed = await native({ op: "commit", id: prepared.id });
-        if (!committed.ok) notify();
+        if (!committed.ok) { notify(); await captureStatus("commit_failed"); return; }
       }
+      await captureStatus("captured");
     } catch {
       if (prepared?.ok && !prepared.duplicate)
         await native({ op: "abort", id: prepared.id });
@@ -179,6 +188,27 @@ api.downloads.onCreated.addListener((item) => {
       } catch {
         /* The user may have canceled it. */
       }
+      await captureStatus("handoff_failed");
     }
-  })().catch(() => {});
+  })().catch(() => {}).finally(() => handling.delete(item.id));
+  handling.set(item.id, operation);
+  return operation;
+};
+api.downloads.onCreated.addListener(handleDownload);
+const handleUpdatedDownload = async (item) => {
+  // A richer filename event must not be lost behind an earlier URL-only check.
+  await handling.get(item.id);
+  return handleDownload(item);
+};
+// Content-Disposition filenames/final redirect URLs can arrive after onCreated.
+api.downloads.onChanged?.addListener((delta) => {
+  if (!delta.filename && !delta.finalUrl) return;
+  return api.downloads.search({ id: delta.id }).then((items) => items[0] && handleUpdatedDownload(items[0])).catch(() => {});
+});
+// Chrome supplies the server-derived filename here before finalizing the file.
+// Keep its filename callback alive while the safe handoff runs, rather than
+// allowing a tiny/fast EXE to finish during the native health check.
+api.downloads.onDeterminingFilename?.addListener((item, suggest) => {
+  void handleUpdatedDownload(item).finally(() => suggest());
+  return true;
 });

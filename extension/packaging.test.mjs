@@ -19,9 +19,25 @@ test("release staging excludes native harnesses, profiles and source secrets", a
   const chrome = await stageExtension("chromium", "1.2.3", path.join(root, "chromium"), key);
   assert.equal(chrome.key, key);
   const files = (await fs.readdir(path.join(root, "chromium"))).sort();
-  assert.deepEqual(files, [...packageFiles, "manifest.json"].sort());
+  assert.deepEqual(files, [...packageFiles, "manifest.json", "ui-assets"].sort());
+  const popup = await fs.readFile(path.join(root, "chromium/options.html"), "utf8");
+  assert.match(popup, /ui-assets\/popup\.js/);
+  assert.doesNotMatch(popup, /ui\/main\.jsx|localhost:1421|@vite\/client/);
+  assert.ok((await fs.readdir(path.join(root, "chromium/ui-assets"))).every((name) => /\.(js|css|woff2?)$/.test(name)));
   const firefox = await stageExtension("firefox", "1.2.3", path.join(root, "firefox"));
   assert.equal(firefox.browser_specific_settings.gecko.id, "osdm@osdm.app");
+  for (const [browser, manifest] of [["chromium", chrome], ["firefox", firefox]]) {
+    assert.deepEqual(Object.keys(manifest.icons), ["16", "32", "48", "128"]);
+    for (const [size, file] of Object.entries(manifest.icons)) {
+      assert.ok(packageFiles.includes(file));
+      const png = await fs.readFile(path.join(root, browser, file));
+      assert.equal(png.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
+      assert.equal(png.readUInt32BE(16), Number(size));
+      assert.equal(png.readUInt32BE(20), Number(size));
+    }
+    for (const [size, file] of Object.entries(manifest.action.default_icon)) assert.equal(file, manifest.icons[size]);
+    assert.equal(manifest.action.default_title, "OSDM capture");
+  }
   await assert.rejects(stageExtension("firefox", "1.2.3", path.join(root, "firefox")));
 });
 

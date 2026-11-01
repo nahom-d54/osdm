@@ -5,6 +5,7 @@ param(
     [string]$FirefoxManifest
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'backup.ps1')
 $root = [Microsoft.Win32.Registry]::CurrentUser
 $options = [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames
 
@@ -45,7 +46,7 @@ if ($Mode -eq 'Install') {
     Write-Output 'Temporary current-user native-host registration installed.'
 } else {
     if (!(Test-Path -LiteralPath $StateFile)) { throw 'Registration backup missing; refusing to guess the previous state.' }
-    $snapshot = @(Get-Content -LiteralPath $StateFile -Raw | ConvertFrom-Json)
+    $snapshot = @(Read-NativeRegistrationBackup -Path $StateFile)
     foreach ($entry in $snapshot) {
         if ($entry.path -notmatch '^Software\\(Google\\Chrome|Chromium|Mozilla)\\NativeMessagingHosts\\app\.osdm\.capture$') { throw 'Unexpected registry path in backup.' }
         $key=$root.OpenSubKey($entry.path, $true)
@@ -59,6 +60,8 @@ if ($Mode -eq 'Install') {
             }
             if ($entry.hasValue) { $key.SetValue('', $entry.value, ([Microsoft.Win32.RegistryValueKind]$entry.kind)) }
             else { $key.DeleteValue('', $false) }
+            $hasValue = $key.GetValueNames() -contains ''
+            if ($hasValue -ne $entry.hasValue -or ($hasValue -and ($key.GetValue('', $null, $options) -ne $entry.value -or $key.GetValueKind('').ToString() -ne $entry.kind))) { throw 'Native-host registration restoration verification failed.' }
         } finally { $key.Dispose() }
         $missing=@($entry.missing)
         [array]::Reverse($missing)
