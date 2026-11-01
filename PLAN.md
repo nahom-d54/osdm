@@ -560,8 +560,9 @@ Features:
 browser/desktop selection, engine-budgeted HLS and static-DASH inspection, durable
 MPEG-TS HLS→Matroska jobs with exact-output hashing and no-overwrite publication,
 optional validated SRT/WebVTT, and per-site disable are tested, including a real
-installed-FFmpeg merge. Still open: DASH job downloads, live/DRM, automatic
-rendition discovery, and manual production-stream playback review. See
+installed-FFmpeg merges, including static fragmented-MP4 DASH jobs. Still open:
+live/DRM capture, automatic rendition discovery, and manual production-stream
+playback review. See
 [P3 scope and limits](docs/p3-retrieval.md).
 
 #### 6.4.2 Site Grabber
@@ -744,10 +745,10 @@ safe changed-source revision checks, the CLI with desktop queue triggers,
 Chromium/Firefox extension targets and protected native-message forwarding,
 Windows startup, and explicit cancellable completion actions in source. P3 is
 implemented in source for its bounded subset: browser/desktop media selection,
-engine-budgeted HLS and static-DASH inspection, durable verified HLS→Matroska
-capture with subtitles, and resumable, budgeted, robots-respecting Site Grabber
-projects. DASH job downloads, live/DRM, scheduled site runs and caching remain
-open, and no whole-priority completion is claimed. The scoped early-start decision
+engine-budgeted HLS and static-DASH inspection, durable verified HLS→Matroska and
+static-DASH→Matroska capture with subtitles, and resumable, budgeted,
+robots-respecting Site Grabber projects. Live/DRM capture, scheduled site runs
+and caching remain open, and no whole-priority completion is claimed. The scoped early-start decision
 and evidence are in `docs/p3-retrieval.md`. P4 remains planned.
 The P2 ordering decision is recorded in `docs/p2-automation.md`;
 behavior, synchronization's current revision-only implementation, and outstanding live

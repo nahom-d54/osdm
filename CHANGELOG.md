@@ -11,10 +11,11 @@ All notable changes to OSDM are documented here. This project follows
 - Engine-owned bounded HLS and static-DASH manifest inspection with explicit
   redirect-origin authorization, shared transfer budgets, cancellation and
   shutdown draining.
-- Durable media jobs for explicitly selected unencrypted MPEG-TS HLS VOD:
-  ordinary checkpointed segment transfers, local FFmpeg remux, independent decode,
-  synchronized SHA-256 verification and recoverable no-overwrite publication, with
-  optional validated SRT/WebVTT attachment and category/description metadata.
+- Durable media jobs for explicitly selected unencrypted MPEG-TS HLS VOD and
+  static fragmented-MP4 DASH `SegmentList` tracks: ordinary checkpointed segment
+  transfers, local FFmpeg remux, independent decode, synchronized SHA-256
+  verification and recoverable no-overwrite publication, with optional validated
+  SRT/WebVTT attachment and category/description metadata.
 - Offline bounded media planning: HLS averages/frame rate and VOD sequence,
   conservative DASH `SegmentList` plans, and SRT/WebVTT validation.
 - Desktop **Save media** workflow with declared-quality selection, DASH
@@ -35,8 +36,7 @@ All notable changes to OSDM are documented here. This project follows
 - Storage-aware reservations and duplicate detection.
 - Mirror benchmarking and failover.
 - Predictive scheduling and automatic file organization.
-- DASH media-job downloads, live/DRM capture, scheduled Site Grabber runs and
-  response caching.
+- Live/DRM capture, scheduled Site Grabber runs and response caching.
 
 P3's bounded subset is implemented in source and tested; it is not claimed
 complete against every `PLAN.md` §6.4 bullet. See

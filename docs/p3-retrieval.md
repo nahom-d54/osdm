@@ -36,9 +36,12 @@ for a bounded subset is not evidence for every bullet in `PLAN.md` §6.4.
     permits, and idle-only shutdown refuses an active inspection.
 - Durable media jobs (`Engine::create_media_job`, `list_media_jobs`,
   `pause/resume/cancel_media_job`):
-  - an explicit quality must be selected; a master playlist is never auto-chosen;
+  - an explicit quality or DASH representation must be selected; a master
+    playlist is never auto-chosen and no DASH track is inferred;
   - child segment downloads use the ordinary engine connection/rate/retry/
-    checkpoint path and are persisted before their identity is linked;
+    checkpoint path and are persisted before their identity is linked; HLS uses
+    MPEG-TS segments, DASH uses an initialization segment plus fragmented-MP4
+    segments per selected track;
   - restart reopens jobs paused, and interrupted children are adopted rather
     than duplicated;
   - merging uses the shared local-only remux, then an independent decode, a
@@ -50,8 +53,8 @@ for a bounded subset is not evidence for every bullet in `PLAN.md` §6.4.
   manifest; it shows manifest-declared quality (never measured or invented),
   requires explicit origin approval, exposes output folder/name, description and
   category, lists saved jobs with engine-authoritative progress, and offers
-  Pause/Resume/Cancel. Direct-file subtitle attachment and DASH job download are
-  refused with an explanation instead of silently degrading.
+  Pause/Resume/Cancel. Direct-file subtitle attachment is refused with an
+  explanation instead of silently degrading.
 - Browser workflow: an explicit popup scan of the active page, a single chosen
   media item (optional player subtitle), persisted global/exact-site disable, and
   an authenticated native `offer_media` handoff. Nothing downloads automatically,
@@ -90,8 +93,9 @@ for a bounded subset is not evidence for every bullet in `PLAN.md` §6.4.
 - HLS capture is **standalone unencrypted MPEG-TS VOD merged into Matroska**.
   Live/event playlists, encryption/DRM, byte ranges, initialization maps,
   discontinuities and external audio/subtitle renditions are rejected.
-- DASH is **inspection and explicit selection only**; DASH tracks cannot yet be
-  queued as a media job. Templates, timelines, live, DRM and text tracks other
+- DASH capture supports **one static period with explicit `SegmentList`** and
+  fragmented-MP4 tracks, with an explicit video and/or audio representation. Live,
+  DRM, `SegmentTemplate`/`SegmentTimeline`, multiple periods and text tracks other
   than a single static VTT/SRT segment are rejected.
 - Subtitles are an explicitly chosen SRT/WebVTT source; there is no automatic
   rendition discovery.
@@ -99,6 +103,8 @@ for a bounded subset is not evidence for every bullet in `PLAN.md` §6.4.
   capture, no automatic site-wide capture.
 - Site Grabber has no scheduled/periodic exploration, no response cache and no
   filter-editing continuation of an existing project; those remain open.
+- Media jobs have no removal/cleanup API; workspaces and artifact identity anchors
+  are retained.
 - FFmpeg is a trusted, explicitly configured local executable. Its output and CPU
   are not OS-sandboxed, and merge artifacts are retained rather than deleted by a
   cleanup command.
@@ -123,13 +129,15 @@ pnpm exec playwright test
 Recorded 2026-11-01 on Windows with the locally installed
 `C:/apps/ffmpeg/bin/{ffmpeg,ffprobe}.exe`:
 
-- `cargo test --workspace`: **204 passed, 3 ignored** (the opt-in multi-gigabyte
+- `cargo test --workspace`: **206 passed, 3 ignored** (the opt-in multi-gigabyte
   transfer test and two opt-in codec tests).
 - Opt-in remux suite (`--test remux -- --ignored`): **2 passed** using real
   FFmpeg/ffprobe — generated MPEG-TS to Matroska with subtitle extraction and
   language metadata, and fragmented MP4 with separate A/V plus WebVTT.
-- Media integration tests: real FFmpeg remux of a completed loopback VOD, exact
-  output hash, racing-output preservation and no-overwrite publication.
+- Media integration tests: real FFmpeg remux of a completed loopback HLS VOD, and
+  a real FFmpeg-generated static DASH asset set downloaded through the engine and
+  merged from explicitly selected `SegmentList` tracks; both verify exact output
+  hash, racing-output preservation and no-overwrite publication.
 - Site integration tests cover robots → HTML → metadata → review → hard-capped
   download, changed length, existing destination, real page/robots caps,
   pause/restart replay, shutdown drain, unconfirmed no-network creation,
@@ -145,8 +153,7 @@ Recorded 2026-11-01 on Windows with the locally installed
 ### Not verified
 
 - No live real-browser capture run in this pass, no store signing or publication.
-- No manual media-playback review of a production stream, and no end-to-end DASH
-  download because it is not implemented.
+- No manual media-playback review of a production stream.
 - No OS-level resource sandbox around FFmpeg.
 - P1/P2 live release gates remain open; P4 remains planned.
 
@@ -156,6 +163,6 @@ Recorded 2026-11-01 on Windows with the locally installed
   bridge, schema or publication changes.
 - 2026-10-31: engine-owned bounded HLS manifest inspection with explicit
   redirect-origin authorization (103 package tests and 130 workspace tests).
-- 2026-11-01: media plans/remux/subtitles, durable media jobs with verified
-  publication, browser and desktop workflows, and the resumable budgeted Site
-  Grabber (see evidence above).
+- 2026-11-01: media plans/remux/subtitles, durable HLS and static-DASH media jobs
+  with verified publication, browser and desktop workflows, and the resumable
+  budgeted Site Grabber (see evidence above).

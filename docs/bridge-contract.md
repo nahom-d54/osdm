@@ -158,12 +158,14 @@ two-number tuple or null; codecs are optional manifest-declared text.
 master playlist to `engine_create_media_job` is rejected, as is any segment,
 subtitle or redirect origin that was not explicitly approved.
 
-Media jobs support standalone unencrypted MPEG-TS HLS VOD merged into Matroska,
-with optional validated SRT/WebVTT embedding. DASH is inspection/selection only:
-its tracks cannot yet be queued as a media job. Live, event, encrypted/DRM,
-byte-range, initialization-map, template/timeline and external-rendition sources
-are rejected rather than silently altered. Job `sha256` is locally computed, not
-publisher-authenticated integrity.
+Media jobs support standalone unencrypted MPEG-TS HLS VOD and static fragmented-
+MP4 DASH `SegmentList` tracks merged into Matroska, with optional validated
+SRT/WebVTT embedding. DASH requires at least one explicitly selected
+`dash_tracks` key (video and/or audio); its initialization segment is kept first.
+Live, event, encrypted/DRM, byte-range, HLS initialization-map, DASH
+template/timeline, multi-period and external-rendition sources are rejected rather
+than silently altered. Job `sha256` is locally computed, not publisher-
+authenticated integrity.
 
 Inspection IDs support cancellation, including a bounded cancellation tombstone
 when cancellation arrives before native admission. Closing/changing the dialog
